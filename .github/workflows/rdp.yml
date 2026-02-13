@@ -1,0 +1,261 @@
+name: Playit RDP Tunnel - Optimized
+on:
+  workflow_dispatch:
+jobs:
+  setup-rdp-tunnel:
+    runs-on: windows-latest-8-cores
+    timeout-minutes: 360
+    
+    steps:
+    - name: Check out the repository
+      uses: actions/checkout@v4
+      
+    - name: System Information
+      run: |
+        Write-Host "=== SYSTEM SPECIFICATIONS ===" -ForegroundColor Green
+        Get-ComputerInfo | Select-Object CsProcessors, CsTotalPhysicalMemory, OsArchitecture
+        $disk = Get-PSDrive C
+        Write-Host "Storage: $([math]::Round(($disk.Used + $disk.Free)/1GB, 2)) GB" -ForegroundColor Cyan
+        Write-Host "CPU Cores: $env:NUMBER_OF_PROCESSORS" -ForegroundColor Cyan
+        
+        # GPU Info
+        $gpu = Get-WmiObject Win32_VideoController
+        Write-Host "GPU: $($gpu.Name)" -ForegroundColor Cyan
+        Write-Host "============================================" -ForegroundColor Green
+        
+    - name: Optimize Windows for Maximum Performance
+      run: |
+        # Set power plan to High Performance
+        powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+        
+        # Disable hibernation to free up disk space
+        powercfg /hibernate off
+        
+        # Disable Windows Defender real-time protection
+        Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+        
+        # Optimize virtual memory
+        $computersys = Get-WmiObject Win32_ComputerSystem -EnableAllPrivileges
+        $computersys.AutomaticManagedPagefile = $false
+        $computersys.Put()
+        $pagefile = Get-WmiObject -Query "Select * From Win32_PageFileSetting"
+        $pagefile.InitialSize = 16384
+        $pagefile.MaximumSize = 32768
+        $pagefile.Put()
+        
+        # Disable unnecessary services
+        $services = @("DiagTrack", "dmwappushservice", "WSearch", "SysMain")
+        foreach ($service in $services) {
+          Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
+        }
+        
+        Write-Host "✅ Performance optimizations applied!" -ForegroundColor Green
+        
+    - name: Network Optimization
+      run: |
+        Write-Host "🌐 Optimizing Network Settings..." -ForegroundColor Cyan
+        
+        # Disable network throttling
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Value 0xffffffff -Force
+        
+        # Enable TCP optimizations
+        netsh int tcp set global autotuninglevel=normal
+        netsh int tcp set global chimney=enabled
+        netsh int tcp set global dca=enabled
+        netsh int tcp set global netdma=enabled
+        netsh int tcp set global congestionprovider=ctcp
+        netsh int tcp set global ecncapability=enabled
+        
+        # Optimize TCP settings for better performance
+        netsh int tcp set global rss=enabled
+        netsh int tcp set global fastopen=enabled
+        netsh int tcp set global timestamps=disabled
+        
+        # Set DNS to fast servers (Cloudflare & Google)
+        $adapters = Get-NetAdapter | Where-Object {$_.Status -eq "Up"}
+        foreach ($adapter in $adapters) {
+          Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses ("1.1.1.1","8.8.8.8") -ErrorAction SilentlyContinue
+        }
+        
+        # Disable large send offload for stability
+        Get-NetAdapterAdvancedProperty -Name "*" | Where-Object {$_.DisplayName -match "Large Send Offload"} | Set-NetAdapterAdvancedProperty -RegistryValue 0 -ErrorAction SilentlyContinue
+        
+        # Clear DNS cache
+        ipconfig /flushdns
+        
+        # Increase network buffer sizes
+        netsh int tcp set global maxsynretransmissions=2
+        
+        Write-Host "✅ Network optimized for maximum speed!" -ForegroundColor Green
+        
+    - name: Enable GPU Acceleration
+      run: |
+        Write-Host "🎮 Enabling GPU Acceleration..." -ForegroundColor Cyan
+        
+        # Get GPU information
+        $gpu = Get-WmiObject Win32_VideoController
+        Write-Host "Detected GPU: $($gpu.Name)" -ForegroundColor Yellow
+        
+        # Enable hardware acceleration in Windows
+        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Avalon.Graphics" -Name "DisableHWAcceleration" -Value 0 -Force -ErrorAction SilentlyContinue
+        
+        # Enable GPU acceleration for RDP
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "fEnableWddmDriver" -Value 1 -Force -ErrorAction SilentlyContinue
+        
+        # Enable hardware graphics acceleration
+        New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Value 2 -Force -ErrorAction SilentlyContinue
+        
+        # Disable GPU power saving
+        powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE 0
+        powercfg /setactive SCHEME_CURRENT
+        
+        # Enable DirectX acceleration
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\DirectDraw" -Name "EmulationOnly" -Value 0 -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Direct3D" -Name "DisableDXMaximizedWindowedMode" -Value 0 -Force -ErrorAction SilentlyContinue
+        
+        Write-Host "✅ GPU acceleration enabled!" -ForegroundColor Green
+        
+    - name: Clear Temp Files and Free Up Storage
+      run: |
+        Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+        
+        Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path "C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
+        Start-Service -Name wuauserv -ErrorAction SilentlyContinue
+        
+        Write-Host "✅ Storage cleaned!" -ForegroundColor Green
+        
+    - name: Download and Install Playit
+      run: |
+        Write-Host "📥 Downloading Playit..." -ForegroundColor Cyan
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -Uri "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.26/playit-windows-x86_64-signed.exe" -OutFile "$env:USERPROFILE\playit.exe"
+        Write-Host "✅ Playit downloaded successfully!" -ForegroundColor Green
+        Start-Sleep -Seconds 3
+        
+    - name: Configure Auto-Login with Admin User
+      run: |
+        Write-Host "🔐 Configuring auto-login..." -ForegroundColor Cyan
+        
+        # Set runneradmin password
+        $password = "P@ssw0rd!2024#Secure"
+        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText $password -Force)
+        
+        # Enable auto-login for runneradmin
+        $RegPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+        Set-ItemProperty -Path $RegPath -Name "AutoAdminLogon" -Value "1" -Force
+        Set-ItemProperty -Path $RegPath -Name "DefaultUserName" -Value "runneradmin" -Force
+        Set-ItemProperty -Path $RegPath -Name "DefaultPassword" -Value $password -Force
+        Set-ItemProperty -Path $RegPath -Name "AutoLogonCount" -Value "999999" -Force
+        
+        # Disable lock screen
+        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows" -Name "Personalization" -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -Value 1 -Force
+        
+        # Skip password on wake
+        powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_NONE CONSOLELOCK 0
+        powercfg /SETDCVALUEINDEX SCHEME_CURRENT SUB_NONE CONSOLELOCK 0
+        
+        Write-Host "✅ Auto-login configured for runneradmin!" -ForegroundColor Green
+        
+    - name: Configure RDP for Maximum Performance
+      run: |
+        # Enable Remote Desktop
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0 -Force
+        
+        # Enable firewall rules
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        
+        # Disable Network Level Authentication
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0 -Force
+        
+        # Configure RDP for best performance
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "ColorDepth" -Value 4 -Force
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "fDisableCam" -Value 0 -Force
+        
+        # Allow unlimited connections
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "MaxInstanceCount" -Value 999999 -Force
+        
+        # Enable GPU acceleration for RDP sessions
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "fEnableWddmDriver" -Value 1 -Force -ErrorAction SilentlyContinue
+        
+        # Optimize RDP bandwidth
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "MaxCompressionLevel" -Value 2 -Force
+        
+        Write-Host "✅ RDP configured for maximum performance!" -ForegroundColor Green
+        
+    - name: Display Connection Information
+      run: |
+        Write-Host "" 
+        Write-Host "============================================" -ForegroundColor Yellow
+        Write-Host "  🖥️  RDP SERVER READY!" -ForegroundColor Yellow
+        Write-Host "============================================" -ForegroundColor Yellow
+        Write-Host "Username: runneradmin" -ForegroundColor Cyan
+        Write-Host "Password: P@ssw0rd!2024#Secure" -ForegroundColor Cyan
+        Write-Host "Auto-Login: ✅ Enabled" -ForegroundColor Green
+        Write-Host "Network: ✅ Optimized" -ForegroundColor Green
+        Write-Host "GPU Acceleration: ✅ Enabled" -ForegroundColor Green
+        Write-Host "============================================" -ForegroundColor Yellow
+        Write-Host ""
+        
+    - name: Start Playit Tunnel
+      env:
+        PLAYIT_AUTH_KEY: ${{ secrets.PL }} 
+      run: |
+        Write-Host "🚀 Starting Playit tunnel..." -ForegroundColor Cyan
+        Start-Process -FilePath "$env:USERPROFILE\playit.exe" -ArgumentList "--secret $env:PLAYIT_AUTH_KEY" -NoNewWindow
+        Start-Sleep -Seconds 10
+        Write-Host "✅ Playit tunnel is running!" -ForegroundColor Green
+        
+    - name: Enable All CPU Cores
+      run: |
+        $cores = (Get-WmiObject -Class Win32_Processor).NumberOfLogicalProcessors
+        Write-Host "⚡ Available CPU Cores: $cores" -ForegroundColor Green
+        
+        # Set processor scheduling for best performance
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" -Name "Win32PrioritySeparation" -Value 38 -Force
+        
+    - name: Memory Status Monitor
+      run: |
+        $ram = Get-WmiObject Win32_OperatingSystem
+        $totalRAM = [math]::Round($ram.TotalVisibleMemorySize/1MB, 2)
+        $freeRAM = [math]::Round($ram.FreePhysicalMemory/1MB, 2)
+        $usedRAM = $totalRAM - $freeRAM
+        
+        Write-Host "============================================" -ForegroundColor Yellow
+        Write-Host "  💾 MEMORY STATUS" -ForegroundColor Yellow
+        Write-Host "============================================" -ForegroundColor Yellow
+        Write-Host "Total RAM: $totalRAM GB" -ForegroundColor Cyan
+        Write-Host "Used RAM: $usedRAM GB" -ForegroundColor Cyan
+        Write-Host "Free RAM: $freeRAM GB" -ForegroundColor Cyan
+        Write-Host "============================================" -ForegroundColor Yellow
+        
+    - name: Keep Alive with Performance Monitoring
+      run: |
+        Write-Host "🔥 Session will remain active for 6 hours..." -ForegroundColor Green
+        Write-Host "📊 Monitoring system performance..." -ForegroundColor Cyan
+        Write-Host ""
+        
+        $endTime = (Get-Date).AddHours(6)
+        
+        while ((Get-Date) -lt $endTime) {
+          $remaining = ($endTime - (Get-Date)).ToString("hh\:mm\:ss")
+          
+          # Get current stats
+          $cpu = (Get-WmiObject win32_processor).LoadPercentage
+          $ram = Get-WmiObject Win32_OperatingSystem
+          $ramUsage = [math]::Round((($ram.TotalVisibleMemorySize - $ram.FreePhysicalMemory) / $ram.TotalVisibleMemorySize) * 100, 2)
+          
+          Write-Host "[$(Get-Date -Format 'HH:mm:ss')] ⏰ Remaining: $remaining | 🔥 CPU: $cpu% | 💾 RAM: $ramUsage%" -ForegroundColor Cyan
+          
+          # Keep system active
+          $wsh = New-Object -ComObject WScript.Shell
+          $wsh.SendKeys('+{F15}')
+          
+          Start-Sleep -Seconds 1800  # Update every 30 minutes
+        }
+        
+        Write-Host ""
+        Write-Host "⏹️ Session time limit reached!" -ForegroundColor Yellow
