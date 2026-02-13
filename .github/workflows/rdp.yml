@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
 jobs:
   setup-rdp-tunnel:
-    runs-on: windows-latest  # ✅ FIXED: Changed from windows-latest-8-cores
+    runs-on: windows-latest
     timeout-minutes: 360
     
     steps:
@@ -19,7 +19,7 @@ jobs:
         Write-Host "CPU Cores: $env:NUMBER_OF_PROCESSORS" -ForegroundColor Cyan
         
         # GPU Info
-        $gpu = Get-WmiObject Win32_VideoController
+        $gpu = Get-CimInstance Win32_VideoController
         Write-Host "GPU: $($gpu.Name)" -ForegroundColor Cyan
         Write-Host "============================================" -ForegroundColor Green
         
@@ -34,14 +34,8 @@ jobs:
         # Disable Windows Defender real-time protection
         Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
         
-        # Optimize virtual memory
-        $computersys = Get-WmiObject Win32_ComputerSystem -EnableAllPrivileges
-        $computersys.AutomaticManagedPagefile = $false
-        $computersys.Put()
-        $pagefile = Get-WmiObject -Query "Select * From Win32_PageFileSetting"
-        $pagefile.InitialSize = 8192
-        $pagefile.MaximumSize = 16384
-        $pagefile.Put()
+        # Optimize virtual memory using registry (PowerShell 7 compatible)
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "PagingFiles" -Value "C:\pagefile.sys 8192 16384" -Force -ErrorAction SilentlyContinue
         
         # Disable unnecessary services
         $services = @("DiagTrack", "dmwappushservice", "WSearch", "SysMain")
@@ -56,6 +50,7 @@ jobs:
         Write-Host "🌐 Optimizing Network Settings..." -ForegroundColor Cyan
         
         # Disable network throttling
+        New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Force -ErrorAction SilentlyContinue
         Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Value 0xffffffff -Force
         
         # Enable TCP optimizations
@@ -87,10 +82,11 @@ jobs:
         Write-Host "🎮 Enabling GPU Acceleration..." -ForegroundColor Cyan
         
         # Get GPU information
-        $gpu = Get-WmiObject Win32_VideoController
+        $gpu = Get-CimInstance Win32_VideoController
         Write-Host "Detected GPU: $($gpu.Name)" -ForegroundColor Yellow
         
         # Enable hardware acceleration in Windows
+        New-Item -Path "HKCU:\Software\Microsoft\Avalon.Graphics" -Force -ErrorAction SilentlyContinue
         Set-ItemProperty -Path "HKCU:\Software\Microsoft\Avalon.Graphics" -Name "DisableHWAcceleration" -Value 0 -Force -ErrorAction SilentlyContinue
         
         # Enable GPU acceleration for RDP
@@ -105,7 +101,9 @@ jobs:
         powercfg /setactive SCHEME_CURRENT
         
         # Enable DirectX acceleration
+        New-Item -Path "HKLM:\SOFTWARE\Microsoft\DirectDraw" -Force -ErrorAction SilentlyContinue
         Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\DirectDraw" -Name "EmulationOnly" -Value 0 -Force -ErrorAction SilentlyContinue
+        New-Item -Path "HKLM:\SOFTWARE\Microsoft\Direct3D" -Force -ErrorAction SilentlyContinue
         Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Direct3D" -Name "DisableDXMaximizedWindowedMode" -Value 0 -Force -ErrorAction SilentlyContinue
         
         Write-Host "✅ GPU acceleration enabled!" -ForegroundColor Green
@@ -145,7 +143,7 @@ jobs:
         Set-ItemProperty -Path $RegPath -Name "AutoLogonCount" -Value "999999" -Force
         
         # Disable lock screen
-        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows" -Name "Personalization" -Force -ErrorAction SilentlyContinue
+        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Force -ErrorAction SilentlyContinue
         Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -Value 1 -Force
         
         # Skip password on wake
@@ -205,7 +203,7 @@ jobs:
         
     - name: Enable All CPU Cores
       run: |
-        $cores = (Get-WmiObject -Class Win32_Processor).NumberOfLogicalProcessors
+        $cores = (Get-CimInstance -Class Win32_Processor).NumberOfLogicalProcessors
         Write-Host "⚡ Available CPU Cores: $cores" -ForegroundColor Green
         
         # Set processor scheduling for best performance
@@ -213,7 +211,7 @@ jobs:
         
     - name: Memory Status Monitor
       run: |
-        $ram = Get-WmiObject Win32_OperatingSystem
+        $ram = Get-CimInstance Win32_OperatingSystem
         $totalRAM = [math]::Round($ram.TotalVisibleMemorySize/1MB, 2)
         $freeRAM = [math]::Round($ram.FreePhysicalMemory/1MB, 2)
         $usedRAM = $totalRAM - $freeRAM
@@ -238,8 +236,8 @@ jobs:
           $remaining = ($endTime - (Get-Date)).ToString("hh\:mm\:ss")
           
           # Get current stats
-          $cpu = (Get-WmiObject win32_processor).LoadPercentage
-          $ram = Get-WmiObject Win32_OperatingSystem
+          $cpu = (Get-CimInstance Win32_Processor).LoadPercentage
+          $ram = Get-CimInstance Win32_OperatingSystem
           $ramUsage = [math]::Round((($ram.TotalVisibleMemorySize - $ram.FreePhysicalMemory) / $ram.TotalVisibleMemorySize) * 100, 2)
           
           Write-Host "[$(Get-Date -Format 'HH:mm:ss')] ⏰ Remaining: $remaining | 🔥 CPU: $cpu% | 💾 RAM: $ramUsage%" -ForegroundColor Cyan
