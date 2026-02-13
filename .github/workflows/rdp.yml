@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
 jobs:
   setup-rdp-tunnel:
-    runs-on: windows-latest
+    runs-on: windows-latest  # ✅ FIXED: Changed from windows-latest-8-cores
     timeout-minutes: 360
     
     steps:
@@ -39,8 +39,8 @@ jobs:
         $computersys.AutomaticManagedPagefile = $false
         $computersys.Put()
         $pagefile = Get-WmiObject -Query "Select * From Win32_PageFileSetting"
-        $pagefile.InitialSize = 16384
-        $pagefile.MaximumSize = 32768
+        $pagefile.InitialSize = 8192
+        $pagefile.MaximumSize = 16384
         $pagefile.Put()
         
         # Disable unnecessary services
@@ -77,14 +77,8 @@ jobs:
           Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses ("1.1.1.1","8.8.8.8") -ErrorAction SilentlyContinue
         }
         
-        # Disable large send offload for stability
-        Get-NetAdapterAdvancedProperty -Name "*" | Where-Object {$_.DisplayName -match "Large Send Offload"} | Set-NetAdapterAdvancedProperty -RegistryValue 0 -ErrorAction SilentlyContinue
-        
         # Clear DNS cache
         ipconfig /flushdns
-        
-        # Increase network buffer sizes
-        netsh int tcp set global maxsynretransmissions=2
         
         Write-Host "✅ Network optimized for maximum speed!" -ForegroundColor Green
         
