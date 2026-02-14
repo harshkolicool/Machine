@@ -1,110 +1,166 @@
-Write-Host "Starting Maximum Performance RDP Setup..."
+name: Maximum Performance RDP via Tailscale
 
-# ===============================
-# USER CONFIGURATION
-# ===============================
-$username = "rdpadmin"
-$password = "UltraFast2024!"
-$securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+on:
+  workflow_dispatch:
 
-# ===============================
-# CREATE USER
-# ===============================
-if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-    New-LocalUser -Name $username `
-        -Password $securePassword `
-        -FullName "RDP Admin" `
-        -Description "High Performance RDP User" `
-        -PasswordNeverExpires `
-        -UserMayNotChangePassword
-}
+jobs:
+  setup-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 360
 
-Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
-Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
-Write-Host "User created successfully."
+    # ========================================
+    # SYSTEM INFO
+    # ========================================
+    - name: Show System Specs
+      shell: powershell
+      run: |
+        Write-Host "===== SYSTEM INFO ====="
+        Get-CimInstance Win32_Processor | Select Name,NumberOfCores,NumberOfLogicalProcessors
+        Get-CimInstance Win32_OperatingSystem | Select TotalVisibleMemorySize
+        Get-CimInstance Win32_VideoController | Select Name
 
-# ===============================
-# ENABLE RDP
-# ===============================
-Set-ItemProperty `
-  -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-  -Name "fDenyTSConnections" -Value 0
+    # ========================================
+    # ULTIMATE PERFORMANCE PLAN
+    # ========================================
+    - name: Enable Ultimate Performance
+      shell: powershell
+      run: |
+        $scheme = powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
+        $guid = ($scheme -split ' ')[3]
+        powercfg /s $guid
+        Write-Host "Ultimate Performance Enabled: $guid"
 
-Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+    # ========================================
+    # NETWORK OPTIMIZATION
+    # ========================================
+    - name: Advanced Network Optimization
+      shell: powershell
+      run: |
+        netsh int tcp set global autotuninglevel=normal
+        netsh int tcp set global rss=enabled
+        netsh int tcp set global chimney=enabled
+        netsh int tcp set global ecncapability=enabled
+        netsh int tcp set global timestamps=disabled
+        netsh int tcp set global initialRto=2000
+        Write-Host "Network optimized."
 
-Write-Host "RDP Enabled."
+    # ========================================
+    # CREATE RDP USER
+    # ========================================
+    - name: Create RDP User
+      shell: powershell
+      run: |
+        $username = "rdpadmin"
+        $password = "UltraFast2024!"
+        $secure = ConvertTo-SecureString $password -AsPlainText -Force
 
-# ===============================
-# ULTIMATE PERFORMANCE PLAN
-# ===============================
-$scheme = powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
-$guid = ($scheme -split ' ')[3]
-powercfg /s $guid
+        if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name $username `
+              -Password $secure `
+              -PasswordNeverExpires `
+              -UserMayNotChangePassword
+        }
 
-Write-Host "Ultimate Performance Activated."
+        Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+        Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
 
-# ===============================
-# ADVANCED NETWORK OPTIMIZATION
-# ===============================
-netsh int tcp set global autotuninglevel=normal
-netsh int tcp set global rss=enabled
-netsh int tcp set global chimney=enabled
-netsh int tcp set global ecncapability=enabled
-netsh int tcp set global timestamps=disabled
-netsh int tcp set global initialRto=2000
+        Write-Host "RDP user created."
 
-Write-Host "Network optimized."
+    # ========================================
+    # ENABLE RDP
+    # ========================================
+    - name: Enable RDP
+      shell: powershell
+      run: |
+        Set-ItemProperty `
+          -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+          -Name "fDenyTSConnections" -Value 0
 
-# ===============================
-# RDP GPU OPTIMIZATION
-# ===============================
-$policyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
-New-Item -Path $policyPath -Force -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $policyPath -Name "bEnforceGpuPreference" -Value 1 -Type DWord -Force
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Write-Host "RDP Enabled."
 
-# ===============================
-# VISUAL PERFORMANCE
-# ===============================
-Set-ItemProperty `
-  -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" `
-  -Name "VisualFXSetting" `
-  -Value 2 -Force
+    # ========================================
+    # RDP PERFORMANCE TUNING
+    # ========================================
+    - name: RDP GPU & Visual Optimization
+      shell: powershell
+      run: |
+        $policyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+        New-Item -Path $policyPath -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $policyPath -Name "bEnforceGpuPreference" -Value 1 -Type DWord -Force
 
-Write-Host "Visual effects optimized."
+        Set-ItemProperty `
+          -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" `
+          -Name "VisualFXSetting" `
+          -Value 2 -Force
 
-# ===============================
-# PRIORITIZE RDP SERVICE
-# ===============================
-Start-Service -Name "TermService"
-Start-Sleep -Seconds 5
+        Write-Host "RDP rendering optimized."
 
-$rdpProcess = Get-Process -Name svchost | Where-Object {
-  (Get-CimInstance Win32_Service -Filter "ProcessId = $($_.Id)").Name -contains 'TermService'
-}
+    - name: Start and Prioritize RDP Service
+      shell: powershell
+      run: |
+        Start-Service -Name "TermService"
+        Start-Sleep -Seconds 5
 
-if ($rdpProcess) {
-    $rdpProcess.PriorityClass = 'High'
-    Write-Host "RDP priority set to HIGH."
-}
+        $rdpProcess = Get-Process -Name svchost | Where-Object {
+          (Get-CimInstance Win32_Service -Filter "ProcessId = $($_.Id)").Name -contains 'TermService'
+        }
 
-# ===============================
-# INSTALL TAILSCALE
-# ===============================
-Write-Host "Installing Tailscale..."
+        if ($rdpProcess) {
+            $rdpProcess.PriorityClass = 'High'
+            Write-Host "RDP priority set to HIGH."
+        }
 
-Invoke-WebRequest `
-  -Uri https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe `
-  -OutFile tailscale.exe
+    # ========================================
+    # INSTALL TAILSCALE
+    # ========================================
+    - name: Install Tailscale
+      shell: powershell
+      run: |
+        Invoke-WebRequest `
+          -Uri https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe `
+          -OutFile tailscale.exe
 
-Start-Process .\tailscale.exe -ArgumentList "/S" -Wait
+        Start-Process .\tailscale.exe -ArgumentList "/S" -Wait
+        Write-Host "Tailscale installed."
 
-Write-Host "Run the following to connect:"
-Write-Host "tailscale up"
-Write-Host ""
-Write-Host "=================================="
-Write-Host "RDP READY"
-Write-Host "=================================="
-Write-Host "Username: rdpadmin"
-Write-Host "Password: UltraFast2024!"
-Write-Host "=================================="
+    - name: Connect to Tailscale
+      shell: powershell
+      env:
+        TS_AUTH_KEY: ${{ secrets.TS_AUTH_KEY }}
+      run: |
+        tailscale up --authkey $env:TS_AUTH_KEY --accept-routes
+        Write-Host "Connected to Tailscale."
+
+    # ========================================
+    # DISPLAY CONNECTION INFO
+    # ========================================
+    - name: Show RDP Info
+      shell: powershell
+      run: |
+        $ip = tailscale ip -4
+
+        Write-Host ""
+        Write-Host "======================================"
+        Write-Host "RDP READY - MAX PERFORMANCE"
+        Write-Host "======================================"
+        Write-Host ""
+        Write-Host "RDP Address:"
+        Write-Host "$ip"
+        Write-Host ""
+        Write-Host "Username: rdpadmin"
+        Write-Host "Password: UltraFast2024!"
+        Write-Host ""
+        Write-Host "Session active for 6 hours."
+
+    # ========================================
+    # KEEP SESSION ALIVE
+    # ========================================
+    - name: Keep Session Alive
+      shell: powershell
+      run: |
+        Start-Sleep -Seconds 21400
