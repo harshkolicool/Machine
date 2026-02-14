@@ -13,18 +13,7 @@ jobs:
       uses: actions/checkout@v4
 
     # ========================================
-    # SYSTEM INFO
-    # ========================================
-    - name: Show System Specs
-      shell: powershell
-      run: |
-        Write-Host "===== SYSTEM INFO ====="
-        Get-CimInstance Win32_Processor | Select Name,NumberOfCores,NumberOfLogicalProcessors
-        Get-CimInstance Win32_OperatingSystem | Select TotalVisibleMemorySize
-        Get-CimInstance Win32_VideoController | Select Name
-
-    # ========================================
-    # ULTIMATE PERFORMANCE PLAN
+    # SYSTEM PERFORMANCE BOOST
     # ========================================
     - name: Enable Ultimate Performance
       shell: powershell
@@ -34,9 +23,6 @@ jobs:
         powercfg /s $guid
         Write-Host "Ultimate Performance Enabled: $guid"
 
-    # ========================================
-    # NETWORK OPTIMIZATION
-    # ========================================
     - name: Advanced Network Optimization
       shell: powershell
       run: |
@@ -55,7 +41,7 @@ jobs:
       shell: powershell
       run: |
         $username = "rdpadmin"
-        $password = "UltraFast2024!"
+        $password = "${{ secrets.RDP_PASSWORD }}"
         $secure = ConvertTo-SecureString $password -AsPlainText -Force
 
         if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
@@ -84,9 +70,9 @@ jobs:
         Write-Host "RDP Enabled."
 
     # ========================================
-    # RDP PERFORMANCE TUNING
+    # RDP GPU + VISUAL OPTIMIZATION
     # ========================================
-    - name: RDP GPU & Visual Optimization
+    - name: Optimize RDP Rendering
       shell: powershell
       run: |
         $policyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
@@ -123,17 +109,27 @@ jobs:
       run: |
         Invoke-WebRequest `
           -Uri https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe `
-          -OutFile tailscale.exe
+          -OutFile tailscale-setup.exe
 
-        Start-Process .\tailscale.exe -ArgumentList "/S" -Wait
+        Start-Process .\tailscale-setup.exe -ArgumentList "/S" -Wait
         Write-Host "Tailscale installed."
 
+    # ========================================
+    # CONNECT TAILSCALE (FIXED PATH)
+    # ========================================
     - name: Connect to Tailscale
       shell: powershell
       env:
-        TS_AUTH_KEY: ${{ secrets.TS_AUTH_KEY }}
+        TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
       run: |
-        tailscale up --authkey $env:TS_AUTH_KEY --accept-routes
+        $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+
+        if (-Not (Test-Path $tailscalePath)) {
+            Write-Error "Tailscale executable not found!"
+            exit 1
+        }
+
+        & "$tailscalePath" up --authkey $env:TAILSCALE_AUTH_KEY --accept-routes
         Write-Host "Connected to Tailscale."
 
     # ========================================
@@ -142,18 +138,19 @@ jobs:
     - name: Show RDP Info
       shell: powershell
       run: |
-        $ip = tailscale ip -4
+        $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+        $ip = & "$tailscalePath" ip -4
 
         Write-Host ""
         Write-Host "======================================"
-        Write-Host "RDP READY - MAX PERFORMANCE"
+        Write-Host "MAX PERFORMANCE RDP READY"
         Write-Host "======================================"
         Write-Host ""
         Write-Host "RDP Address:"
         Write-Host "$ip"
         Write-Host ""
         Write-Host "Username: rdpadmin"
-        Write-Host "Password: UltraFast2024!"
+        Write-Host "Password: (Your RDP_PASSWORD secret)"
         Write-Host ""
         Write-Host "Session active for 6 hours."
 
