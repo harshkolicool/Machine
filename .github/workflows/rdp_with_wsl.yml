@@ -72,23 +72,27 @@ jobs:
           
           Write-Host "Configuring Ubuntu user..." -ForegroundColor Yellow
           
-          # Create a temporary script to set up the user
-          $setupScript = @"
-          useradd -m -s /bin/bash $username
-          echo '${username}:${password}' | chpasswd
-          usermod -aG sudo $username
-          echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-          "@
-          
+          # Create bash script with proper Unix line endings
           $setupScriptPath = "$env:TEMP\wsl_setup.sh"
-          $setupScript | Out-File -FilePath $setupScriptPath -Encoding ASCII
+          $bashScript = @"
+useradd -m -s /bin/bash $username
+echo '${username}:${password}' | chpasswd
+usermod -aG sudo $username
+echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+"@
+          
+          # Write with Unix line endings (LF only)
+          [System.IO.File]::WriteAllText($setupScriptPath, $bashScript, [System.Text.Encoding]::UTF8)
+          
+          # Convert CRLF to LF
+          (Get-Content $setupScriptPath) -replace "`r`n", "`n" | Set-Content $setupScriptPath -NoNewline
           
           # Run the setup as root
           wsl -d Ubuntu -u root bash -c "bash /mnt/c/Users/runneradmin/AppData/Local/Temp/wsl_setup.sh"
           Start-Sleep -Seconds 3
           
-          # Set the default user for Ubuntu
-          ubuntu config --default-user $username
+          # Set default user via WSL config (not ubuntu command)
+          wsl -d Ubuntu -u $username bash -c "echo '[user]' > ~/.bashrc && echo 'default_user=$username' >> ~/.bashrc"
           
           # Run system updates and install packages
           Write-Host "Updating Ubuntu and installing packages..." -ForegroundColor Yellow
