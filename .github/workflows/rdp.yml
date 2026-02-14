@@ -1,4 +1,4 @@
-name: Maximum Performance RDP via Tailscale
+name: Windows Latest Max Performance RDP
 
 on:
   workflow_dispatch:
@@ -9,21 +9,35 @@ jobs:
     timeout-minutes: 360
 
     steps:
-    - name: Checkout Repository
+    - name: Checkout
       uses: actions/checkout@v4
 
-    # ========================================
-    # SYSTEM PERFORMANCE BOOST
-    # ========================================
+    # ====================================================
+    # SYSTEM INFO
+    # ====================================================
+    - name: Show System Info
+      shell: powershell
+      run: |
+        Write-Host "===== SYSTEM INFO ====="
+        systeminfo | findstr /B /C:"OS Name" /C:"OS Version"
+        Get-CimInstance Win32_Processor | Select Name,NumberOfCores,NumberOfLogicalProcessors
+        Get-CimInstance Win32_OperatingSystem | Select TotalVisibleMemorySize
+
+    # ====================================================
+    # ULTIMATE PERFORMANCE
+    # ====================================================
     - name: Enable Ultimate Performance
       shell: powershell
       run: |
         $scheme = powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
         $guid = ($scheme -split ' ')[3]
         powercfg /s $guid
-        Write-Host "Ultimate Performance Enabled: $guid"
+        Write-Host "Ultimate Performance Enabled"
 
-    - name: Advanced Network Optimization
+    # ====================================================
+    # NETWORK STABILITY OPTIMIZATION
+    # ====================================================
+    - name: Optimize Network
       shell: powershell
       run: |
         netsh int tcp set global autotuninglevel=normal
@@ -32,16 +46,16 @@ jobs:
         netsh int tcp set global ecncapability=enabled
         netsh int tcp set global timestamps=disabled
         netsh int tcp set global initialRto=2000
-        Write-Host "Network optimized."
+        Write-Host "Network optimized for stability"
 
-    # ========================================
+    # ====================================================
     # CREATE RDP USER
-    # ========================================
+    # ====================================================
     - name: Create RDP User
       shell: powershell
       run: |
         $username = "rdpadmin"
-        $password = "${{ secrets.RDP_PASSWORD }}"
+        $password = "P@assword!q218"
         $secure = ConvertTo-SecureString $password -AsPlainText -Force
 
         if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
@@ -54,11 +68,11 @@ jobs:
         Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
         Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
 
-        Write-Host "RDP user created."
+        Write-Host "RDP user created"
 
-    # ========================================
+    # ====================================================
     # ENABLE RDP
-    # ========================================
+    # ====================================================
     - name: Enable RDP
       shell: powershell
       run: |
@@ -67,11 +81,11 @@ jobs:
           -Name "fDenyTSConnections" -Value 0
 
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Write-Host "RDP Enabled."
+        Write-Host "RDP Enabled"
 
-    # ========================================
-    # RDP GPU + VISUAL OPTIMIZATION
-    # ========================================
+    # ====================================================
+    # RDP PERFORMANCE TUNING
+    # ====================================================
     - name: Optimize RDP Rendering
       shell: powershell
       run: |
@@ -84,26 +98,14 @@ jobs:
           -Name "VisualFXSetting" `
           -Value 2 -Force
 
-        Write-Host "RDP rendering optimized."
-
-    - name: Start and Prioritize RDP Service
-      shell: powershell
-      run: |
         Start-Service -Name "TermService"
         Start-Sleep -Seconds 5
 
-        $rdpProcess = Get-Process -Name svchost | Where-Object {
-          (Get-CimInstance Win32_Service -Filter "ProcessId = $($_.Id)").Name -contains 'TermService'
-        }
+        Write-Host "RDP optimized"
 
-        if ($rdpProcess) {
-            $rdpProcess.PriorityClass = 'High'
-            Write-Host "RDP priority set to HIGH."
-        }
-
-    # ========================================
+    # ====================================================
     # INSTALL TAILSCALE
-    # ========================================
+    # ====================================================
     - name: Install Tailscale
       shell: powershell
       run: |
@@ -112,29 +114,29 @@ jobs:
           -OutFile tailscale-setup.exe
 
         Start-Process .\tailscale-setup.exe -ArgumentList "/S" -Wait
-        Write-Host "Tailscale installed."
+        Write-Host "Tailscale installed"
 
-    # ========================================
-    # CONNECT TAILSCALE (FIXED PATH)
-    # ========================================
-    - name: Connect to Tailscale
+    # ====================================================
+    # CONNECT TAILSCALE
+    # ====================================================
+    - name: Connect Tailscale
       shell: powershell
       env:
         TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
       run: |
         $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
 
-        if (-Not (Test-Path $tailscalePath)) {
-            Write-Error "Tailscale executable not found!"
+        if (-not (Test-Path $tailscalePath)) {
+            Write-Error "Tailscale not found"
             exit 1
         }
 
         & "$tailscalePath" up --authkey $env:TAILSCALE_AUTH_KEY --accept-routes
-        Write-Host "Connected to Tailscale."
+        Write-Host "Connected to Tailscale"
 
-    # ========================================
-    # DISPLAY CONNECTION INFO
-    # ========================================
+    # ====================================================
+    # SHOW INFO
+    # ====================================================
     - name: Show RDP Info
       shell: powershell
       run: |
@@ -143,20 +145,18 @@ jobs:
 
         Write-Host ""
         Write-Host "======================================"
-        Write-Host "MAX PERFORMANCE RDP READY"
+        Write-Host "WINDOWS-LATEST RDP READY"
         Write-Host "======================================"
         Write-Host ""
-        Write-Host "RDP Address:"
-        Write-Host "$ip"
-        Write-Host ""
+        Write-Host "RDP Address: $ip"
         Write-Host "Username: rdpadmin"
-        Write-Host "Password: (Your RDP_PASSWORD secret)"
+        Write-Host "Password: P@assword!q218"
         Write-Host ""
-        Write-Host "Session active for 6 hours."
+        Write-Host "Session active for 6 hours"
 
-    # ========================================
-    # KEEP SESSION ALIVE
-    # ========================================
+    # ====================================================
+    # KEEP ALIVE (MAX 6 HOURS)
+    # ====================================================
     - name: Keep Session Alive
       shell: powershell
       run: |
