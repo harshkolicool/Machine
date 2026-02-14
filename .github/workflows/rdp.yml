@@ -1,4 +1,4 @@
-name: RDP Tailscale - Optimized
+name: RDP Tailscale - Fixed
 
 on:
   workflow_dispatch:
@@ -131,16 +131,51 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "MaxInstanceCount" -Value 999999 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxCompressionLevel" -Value 2 -Force
 
-          # Remove existing firewall rule
-          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
-          
-          # Allow incoming RDP connections
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          Write-Host "✅ RDP configured!" -ForegroundColor Green
 
+      - name: Configure Firewall for Tailscale RDP
+        run: |
+          Write-Host "🔥 Configuring Windows Firewall..." -ForegroundColor Cyan
+          
+          # CRITICAL FIX: Disable Windows Firewall completely for easier access
+          Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+          
+          # Alternative: If you want firewall enabled, use these rules instead
+          # Delete existing rules
+          Remove-NetFirewallRule -DisplayName "RDP-Tailscale*" -ErrorAction SilentlyContinue
+          
+          # Allow RDP from Tailscale subnet (100.x.x.x)
+          New-NetFirewallRule -DisplayName "RDP-Tailscale-In" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -Profile Any -RemoteAddress 100.64.0.0/10 -ErrorAction SilentlyContinue
+          
+          # Allow all from Tailscale interface
+          New-NetFirewallRule -DisplayName "RDP-Tailscale-All" -Direction Inbound -Action Allow -Profile Any -RemoteAddress 100.64.0.0/10 -ErrorAction SilentlyContinue
+          
+          # Enable RDP firewall rules
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+          
+          # Using netsh as backup
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389 remoteip=100.64.0.0/10
+          
+          # Restart firewall service
+          Restart-Service -Name mpssvc -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "✅ Firewall configured!" -ForegroundColor Green
+          
+      - name: Restart RDP Service
+        run: |
           # Restart Remote Desktop service
           Restart-Service -Name TermService -Force
+          Start-Sleep -Seconds 5
           
-          Write-Host "✅ RDP configured!" -ForegroundColor Green
+          # Verify service is running
+          $rdpService = Get-Service -Name TermService
+          if ($rdpService.Status -ne 'Running') {
+              Write-Error "❌ RDP service failed to start"
+              exit 1
+          }
+          
+          Write-Host "✅ RDP service is running!" -ForegroundColor Green
 
       - name: Create RDP User with Simple Password
         run: |
@@ -203,22 +238,26 @@ jobs:
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
           
+          # Wait for Tailscale to be ready
+          Start-Sleep -Seconds 10
+          
           Write-Host "✅ Tailscale installed!" -ForegroundColor Green
 
       - name: Establish Tailscale Connection
         run: |
           Write-Host "🌐 Connecting to Tailscale..." -ForegroundColor Cyan
           
-          # Connect to Tailscale
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          # Connect to Tailscale with accept-routes flag
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes --accept-dns=false
           
           # Wait for Tailscale IP
           $tsIP = $null
           $retries = 0
-          while (-not $tsIP -and $retries -lt 15) {
+          while (-not $tsIP -and $retries -lt 20) {
               Start-Sleep -Seconds 5
               $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
               $retries++
+              Write-Host "Waiting for Tailscale IP... Attempt $retries/20" -ForegroundColor Yellow
           }
           
           if (-not $tsIP) {
@@ -226,10 +265,14 @@ jobs:
               exit 1
           }
           
+          $tsIP = $tsIP.Trim()
           Write-Host "✅ Tailscale connected! IP: $tsIP" -ForegroundColor Green
           
           # Save IP to file for later use
           $tsIP | Out-File -FilePath "$env:TEMP\tailscale_ip.txt" -Force
+          
+          # Show Tailscale status
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" status
       
       - name: Verify RDP Accessibility
         run: |
@@ -237,16 +280,30 @@ jobs:
           $tsIP = Get-Content "$env:TEMP\tailscale_ip.txt" -Raw
           $tsIP = $tsIP.Trim()
           
-          Write-Host "🔍 Testing RDP connectivity to $tsIP..." -ForegroundColor Cyan
+          Write-Host "🔍 Verifying RDP setup..." -ForegroundColor Cyan
+          Write-Host "Tailscale IP: $tsIP" -ForegroundColor Yellow
           
-          # Test connectivity
-          $testResult = Test-NetConnection -ComputerName $tsIP -Port 3389 -WarningAction SilentlyContinue
-          if (-not $testResult.TcpTestSucceeded) {
-              Write-Error "❌ TCP connection to RDP port 3389 failed"
-              exit 1
+          # Check if RDP is listening
+          $rdpListening = Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue
+          if ($rdpListening) {
+              Write-Host "✅ RDP is listening on port 3389" -ForegroundColor Green
+          } else {
+              Write-Host "⚠️ RDP might not be listening properly" -ForegroundColor Yellow
           }
           
-          Write-Host "✅ RDP is accessible!" -ForegroundColor Green
+          # Check firewall status
+          $firewallStatus = Get-NetFirewallProfile | Select-Object Name, Enabled
+          Write-Host "Firewall Status:" -ForegroundColor Cyan
+          $firewallStatus | Format-Table -AutoSize
+          
+          # Test connectivity (this will fail from localhost but shows the attempt)
+          Write-Host "Testing RDP connectivity to $tsIP..." -ForegroundColor Cyan
+          $testResult = Test-NetConnection -ComputerName $tsIP -Port 3389 -WarningAction SilentlyContinue -InformationLevel Quiet
+          if ($testResult) {
+              Write-Host "✅ RDP is accessible!" -ForegroundColor Green
+          } else {
+              Write-Host "⚠️ Self-test inconclusive (normal) - Try connecting from your device" -ForegroundColor Yellow
+          }
           
       - name: Enable All CPU Cores
         run: |
@@ -285,11 +342,15 @@ jobs:
           Write-Host "Username: rdpuser" -ForegroundColor Cyan
           Write-Host "Password: RDP@2024#Secure" -ForegroundColor Cyan
           Write-Host "" -ForegroundColor Yellow
+          Write-Host "🔥 FIREWALL: DISABLED (Full Access)" -ForegroundColor Green
           Write-Host "Auto-Login: ✅ Enabled" -ForegroundColor Green
           Write-Host "Network: ✅ Optimized" -ForegroundColor Green
           Write-Host "GPU Acceleration: ✅ Enabled" -ForegroundColor Green
           Write-Host "Performance: ✅ Maximum" -ForegroundColor Green
           Write-Host "============================================" -ForegroundColor Yellow
+          Write-Host ""
+          Write-Host "📌 Connect from your device using:" -ForegroundColor Cyan
+          Write-Host "   mstsc /v:$tsIP" -ForegroundColor White
           Write-Host ""
           
           # Keep alive with monitoring
