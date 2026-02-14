@@ -9,12 +9,8 @@ jobs:
       - name: Configure RDP
         shell: powershell
         run: |
-          Set-ItemProperty `
-            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-            -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty `
-            -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-            -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Restart-Service -Name TermService -Force
           
@@ -25,11 +21,7 @@ jobs:
           $password = "P@ssword!q218"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name $username `
-                -Password $securePass `
-                -PasswordNeverExpires `
-                -AccountNeverExpires `
-                -UserMayNotChangePassword
+              New-LocalUser -Name $username -Password $securePass -PasswordNeverExpires -AccountNeverExpires -UserMayNotChangePassword
           }
           Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
@@ -39,10 +31,7 @@ jobs:
         run: |
           $installer = "$env:TEMP\tailscale.msi"
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          Invoke-WebRequest `
-            -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" `
-            -OutFile $installer `
-            -UseBasicParsing
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile $installer -UseBasicParsing
           Start-Process msiexec.exe -ArgumentList "/i `"$installer`" /quiet /norestart" -Wait
           Remove-Item $installer -Force
           Start-Sleep -Seconds 5
@@ -53,17 +42,9 @@ jobs:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
           $tsPath = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          
-          # Connect to Tailscale
-          & $tsPath up `
-            --authkey=$env:TAILSCALE_AUTH_KEY `
-            --hostname=gh-runner-$env:GITHUB_RUN_ID `
-            --accept-routes `
-            --shields-up=false
-          
+          & $tsPath up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes --shields-up=false
           Start-Sleep -Seconds 15
           
-          # Get IP with retry
           $maxRetries = 5
           $tsIP = $null
           for ($i = 1; $i -le $maxRetries; $i++) {
@@ -79,34 +60,24 @@ jobs:
           }
           
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-          
-          # Show full status
           & $tsPath status
 
       - name: Enable Ping (ICMP)
         shell: powershell
         run: |
-          # Enable ICMP Echo Request (Ping) for IPv4
-          netsh advfirewall firewall add rule `
-            name="ICMP Allow incoming V4 echo request" `
-            protocol=icmpv4:8,any dir=in action=allow
-          
-          # Enable ICMP Echo Request for IPv6
-          netsh advfirewall firewall add rule `
-            name="ICMP Allow incoming V6 echo request" `
-            protocol=icmpv6:8,any dir=in action=allow
-          
-          # Verify firewall rules
-          Write-Host "`n✓ ICMP (Ping) enabled successfully" -ForegroundColor Green
-          
-          # Test local ping
-          Write-Host "`nTesting local ping:" -ForegroundColor Cyan
+          netsh advfirewall firewall add rule name="ICMP Allow incoming V4 echo request" protocol=icmpv4:8,any dir=in action=allow
+          netsh advfirewall firewall add rule name="ICMP Allow incoming V6 echo request" protocol=icmpv6:8,any dir=in action=allow
+          Write-Host ""
+          Write-Host "✓ ICMP (Ping) enabled successfully" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "Testing local ping:" -ForegroundColor Cyan
           ping -n 2 127.0.0.1
           
       - name: Show RDP Info
         shell: powershell
         run: |
-          Write-Host "`n======================================" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "======================================" -ForegroundColor Green
           Write-Host "     RDP CONNECTION READY" -ForegroundColor Green
           Write-Host "======================================" -ForegroundColor Green
           Write-Host "Tailscale IP : $env:TAILSCALE_IP" -ForegroundColor Cyan
@@ -116,11 +87,9 @@ jobs:
           Write-Host "======================================" -ForegroundColor Green
           Write-Host "✓ Ping enabled" -ForegroundColor Green
           Write-Host "✓ RDP enabled on port 3389" -ForegroundColor Green
-          Write-Host "======================================`n" -ForegroundColor Green
-          
-          # Show how to connect
-          Write-Host "To test connection:" -ForegroundColor Yellow
-          Write-Host "  ping $env:TAILSCALE_IP" -ForegroundColor White
+          Write-Host "======================================" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "To connect:" -ForegroundColor Yellow
           Write-Host "  mstsc /v:$env:TAILSCALE_IP" -ForegroundColor White
           Write-Host ""
           
@@ -133,7 +102,8 @@ jobs:
           
           Write-Host "Session started at: $startTime"
           Write-Host "Session will end at: $endTime"
-          Write-Host "======================================`n"
+          Write-Host "======================================"
+          Write-Host ""
           
           while ((Get-Date) -lt $endTime) {
               $elapsed = [math]::Round(((Get-Date) - $startTime).TotalMinutes, 1)
@@ -141,7 +111,6 @@ jobs:
               
               Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Session Active | Elapsed: $elapsed min | Remaining: $remaining min" -ForegroundColor Green
               
-              # Health check every 30 minutes
               if ($elapsed % 30 -lt 3) {
                   try {
                       $tsPath = "$env:ProgramFiles\Tailscale\tailscale.exe"
@@ -149,18 +118,13 @@ jobs:
                       
                       if ($tsStatus.BackendState -eq "Running") {
                           Write-Host "  ✓ Tailscale: Connected" -ForegroundColor Green
-                      } else {
-                          Write-Host "  ⚠ Tailscale: $($tsStatus.BackendState)" -ForegroundColor Yellow
                       }
                       
                       $rdpService = Get-Service -Name TermService
                       if ($rdpService.Status -eq "Running") {
                           Write-Host "  ✓ RDP Service: Running" -ForegroundColor Green
-                      } else {
-                          Write-Host "  ⚠ RDP Service: $($rdpService.Status)" -ForegroundColor Yellow
                       }
                       
-                      # Test ping
                       $pingTest = Test-Connection -ComputerName 127.0.0.1 -Count 1 -Quiet
                       if ($pingTest) {
                           Write-Host "  ✓ Ping: Working" -ForegroundColor Green
@@ -173,7 +137,7 @@ jobs:
               Start-Sleep -Seconds $checkInterval
           }
           
-          Write-Host "`n======================================" -ForegroundColor Yellow
-          Write-Host "Maximum session duration reached" -ForegroundColor Yellow
-          Write-Host "Total runtime: $([math]::Round(((Get-Date) - $startTime).TotalMinutes, 1)) minutes" -ForegroundColor Yellow
+          Write-Host ""
           Write-Host "======================================" -ForegroundColor Yellow
+          Write-Host "Maximum session duration reached" -ForegroundColor Yellow
+          Write-Host "======================================"
