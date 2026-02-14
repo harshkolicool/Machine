@@ -1,356 +1,110 @@
-name: RDP Tailscale - Debug Version
+Write-Host "Starting Maximum Performance RDP Setup..."
 
-on:
-  workflow_dispatch:
+# ===============================
+# USER CONFIGURATION
+# ===============================
+$username = "rdpadmin"
+$password = "UltraFast2024!"
+$securePassword = ConvertTo-SecureString $password -AsPlainText -Force
 
-jobs:
-  secure-rdp:
-    runs-on: windows-latest
-    timeout-minutes: 360
+# ===============================
+# CREATE USER
+# ===============================
+if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+    New-LocalUser -Name $username `
+        -Password $securePassword `
+        -FullName "RDP Admin" `
+        -Description "High Performance RDP User" `
+        -PasswordNeverExpires `
+        -UserMayNotChangePassword
+}
 
-    steps:
-      - name: System Information
-        run: |
-          Write-Host "=== SYSTEM INFORMATION ===" -ForegroundColor Green
-          Write-Host "Computer Name: $env:COMPUTERNAME" -ForegroundColor Cyan
-          Write-Host "GitHub Run ID: $env:GITHUB_RUN_ID" -ForegroundColor Cyan
-          Write-Host "CPU Cores: $env:NUMBER_OF_PROCESSORS" -ForegroundColor Cyan
-          Write-Host "===========================`n" -ForegroundColor Green
+Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
 
-      - name: Disable Firewall Completely
-        run: |
-          Write-Host "🔥 Disabling firewall..." -ForegroundColor Red
-          Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
-          netsh advfirewall set allprofiles state off
-          Write-Host "✅ Firewall disabled!`n" -ForegroundColor Green
+Write-Host "User created successfully."
 
-      - name: Configure RDP Settings
-        run: |
-          Write-Host "🖥️ Configuring RDP..." -ForegroundColor Cyan
-          
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+# ===============================
+# ENABLE RDP
+# ===============================
+Set-ItemProperty `
+  -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+  -Name "fDenyTSConnections" -Value 0
 
-          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
-          netsh advfirewall firewall delete rule name="ICMP-Tailscale" 2>$null
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-          netsh advfirewall firewall add rule name="ICMP-Tailscale" dir=in action=allow protocol=icmpv4
+Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-          Restart-Service -Name TermService -Force
-          Start-Sleep -Seconds 3
-          
-          $rdpService = Get-Service -Name TermService
-          Write-Host "RDP Service Status: $($rdpService.Status)" -ForegroundColor Yellow
-          
-          $listening = Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue
-          if ($listening) {
-              Write-Host "✅ Port 3389 is listening" -ForegroundColor Green
-          } else {
-              Write-Host "⚠️ Warning: Port 3389 not listening!" -ForegroundColor Red
-          }
-          Write-Host ""
+Write-Host "RDP Enabled."
 
-      - name: Create RDP User
-        run: |
-          Write-Host "👤 Creating RDP user..." -ForegroundColor Cyan
-          
-          $username = "rdpuser"
-          $password = "RDP@2024#Secure"
-          
-          Remove-LocalUser -Name $username -ErrorAction SilentlyContinue
-          
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name $username -Password $securePass -AccountNeverExpires -PasswordNeverExpires -UserMayNotChangePassword
-          Add-LocalGroupMember -Group "Administrators" -Member $username
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-          
-          echo "RDP_USER=$username" >> $env:GITHUB_ENV
-          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
-          
-          Write-Host "✅ User created: $username`n" -ForegroundColor Green
+# ===============================
+# ULTIMATE PERFORMANCE PLAN
+# ===============================
+$scheme = powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
+$guid = ($scheme -split ' ')[3]
+powercfg /s $guid
 
-      - name: Install Tailscale
-        run: |
-          Write-Host "📥 Installing Tailscale..." -ForegroundColor Cyan
-          
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          
-          try {
-              $ProgressPreference = 'SilentlyContinue'
-              Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath -ErrorAction Stop
-              Write-Host "Downloaded Tailscale installer" -ForegroundColor Yellow
-              
-              $installProcess = Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait -PassThru
-              
-              if ($installProcess.ExitCode -eq 0) {
-                  Write-Host "✅ Tailscale installed successfully" -ForegroundColor Green
-              } else {
-                  Write-Host "⚠️ Installer exit code: $($installProcess.ExitCode)" -ForegroundColor Yellow
-              }
-              
-              Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
-              
-              # Wait for installation to settle
-              Start-Sleep -Seconds 15
-              
-              # Check if Tailscale executable exists
-              if (Test-Path "$env:ProgramFiles\Tailscale\tailscale.exe") {
-                  Write-Host "✅ Tailscale executable found" -ForegroundColor Green
-              } else {
-                  Write-Error "❌ Tailscale executable not found!"
-                  exit 1
-              }
-              
-          } catch {
-              Write-Error "Failed to install Tailscale: $_"
-              exit 1
-          }
-          Write-Host ""
+Write-Host "Ultimate Performance Activated."
 
-      - name: Connect to Tailscale with Full Debug
-        run: |
-          Write-Host "🌐 Connecting to Tailscale..." -ForegroundColor Cyan
-          Write-Host "Auth key starts with: $('${{ secrets.TAILSCALE_AUTH_KEY }}'.Substring(0,10))..." -ForegroundColor Yellow
-          
-          $tailscalePath = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          $hostname = "gh-runner-$env:GITHUB_RUN_ID"
-          
-          Write-Host "Hostname: $hostname" -ForegroundColor Yellow
-          Write-Host ""
-          
-          # Try to connect to Tailscale
-          Write-Host "Executing: tailscale up..." -ForegroundColor Yellow
-          
-          try {
-              # Run Tailscale up command and capture output
-              $upOutput = & $tailscalePath up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=$hostname --accept-routes --accept-dns=false 2>&1
-              
-              Write-Host "Tailscale up output:" -ForegroundColor Cyan
-              Write-Host $upOutput
-              Write-Host ""
-              
-              # Wait for connection to establish
-              Start-Sleep -Seconds 10
-              
-              # Check Tailscale status
-              Write-Host "Checking Tailscale status..." -ForegroundColor Yellow
-              $statusOutput = & $tailscalePath status 2>&1
-              Write-Host $statusOutput
-              Write-Host ""
-              
-              # Try to get IP address
-              Write-Host "Getting Tailscale IP..." -ForegroundColor Yellow
-              $tsIP = $null
-              $maxRetries = 30
-              
-              for ($i = 1; $i -le $maxRetries; $i++) {
-                  Write-Host "Attempt $i/$maxRetries..." -ForegroundColor Yellow
-                  
-                  try {
-                      $ipOutput = & $tailscalePath ip -4 2>&1
-                      Write-Host "IP command output: $ipOutput" -ForegroundColor Gray
-                      
-                      if ($ipOutput -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
-                          $tsIP = $ipOutput.Trim()
-                          Write-Host "✅ Got Tailscale IP: $tsIP" -ForegroundColor Green
-                          break
-                      }
-                  } catch {
-                      Write-Host "Error getting IP: $_" -ForegroundColor Red
-                  }
-                  
-                  Start-Sleep -Seconds 3
-              }
-              
-              if (-not $tsIP) {
-                  Write-Host "❌ Failed to get Tailscale IP after $maxRetries attempts" -ForegroundColor Red
-                  Write-Host ""
-                  Write-Host "Final Tailscale status:" -ForegroundColor Yellow
-                  & $tailscalePath status
-                  Write-Host ""
-                  Write-Host "Checking Tailscale service:" -ForegroundColor Yellow
-                  Get-Service -Name Tailscale* | Format-Table -AutoSize
-                  Write-Host ""
-                  Write-Host "⚠️ Tailscale connection failed, but continuing workflow for debugging..." -ForegroundColor Yellow
-                  echo "TAILSCALE_IP=NOT_ASSIGNED" >> $env:GITHUB_ENV
-              } else {
-                  echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-                  Write-Host "✅ Tailscale connected successfully!" -ForegroundColor Green
-              }
-              
-          } catch {
-              Write-Host "❌ Exception during Tailscale connection: $_" -ForegroundColor Red
-              Write-Host "Exception details:" -ForegroundColor Red
-              Write-Host $_.Exception.Message
-              Write-Host ""
-              echo "TAILSCALE_IP=ERROR" >> $env:GITHUB_ENV
-          }
-          Write-Host ""
+# ===============================
+# ADVANCED NETWORK OPTIMIZATION
+# ===============================
+netsh int tcp set global autotuninglevel=normal
+netsh int tcp set global rss=enabled
+netsh int tcp set global chimney=enabled
+netsh int tcp set global ecncapability=enabled
+netsh int tcp set global timestamps=disabled
+netsh int tcp set global initialRto=2000
 
-      - name: Verify Tailscale Connection
-        run: |
-          Write-Host "🔍 Verifying Tailscale..." -ForegroundColor Cyan
-          
-          # Check Tailscale service
-          Write-Host "Tailscale services:" -ForegroundColor Yellow
-          Get-Service -Name Tailscale* | Format-Table -AutoSize
-          Write-Host ""
-          
-          # Check Tailscale processes
-          Write-Host "Tailscale processes:" -ForegroundColor Yellow
-          Get-Process -Name tailscale* -ErrorAction SilentlyContinue | Format-Table -AutoSize
-          Write-Host ""
-          
-          # Full Tailscale status
-          Write-Host "Full Tailscale status:" -ForegroundColor Yellow
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" status --json 2>&1 | Write-Host
-          Write-Host ""
-          
-          # Network adapters
-          Write-Host "Network adapters:" -ForegroundColor Yellow
-          Get-NetAdapter | Where-Object {$_.Status -eq "Up"} | Select-Object Name, InterfaceDescription, Status | Format-Table -AutoSize
-          Write-Host ""
+Write-Host "Network optimized."
 
-      - name: Performance Optimizations
-        run: |
-          Write-Host "⚡ Applying optimizations..." -ForegroundColor Cyan
-          
-          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
-          powercfg /hibernate off
-          
-          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-          
-          New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Force -ErrorAction SilentlyContinue
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Value 0xffffffff -Force -ErrorAction SilentlyContinue
-          
-          netsh int tcp set global autotuninglevel=normal 2>$null
-          netsh int tcp set global chimney=enabled 2>$null
-          
-          New-Item -Path "HKCU:\Software\Microsoft\Avalon.Graphics" -Force -ErrorAction SilentlyContinue
-          Set-ItemProperty -Path "HKCU:\Software\Microsoft\Avalon.Graphics" -Name "DisableHWAcceleration" -Value 0 -Force -ErrorAction SilentlyContinue
-          
-          Write-Host "✅ Optimizations applied!`n" -ForegroundColor Green
+# ===============================
+# RDP GPU OPTIMIZATION
+# ===============================
+$policyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+New-Item -Path $policyPath -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $policyPath -Name "bEnforceGpuPreference" -Value 1 -Type DWord -Force
 
-      - name: Display Connection Information
-        run: |
-          $tsIP = $env:TAILSCALE_IP
-          
-          Write-Host ""
-          Write-Host "============================================" -ForegroundColor Green
-          Write-Host "  🖥️  RDP SERVER STATUS" -ForegroundColor Green
-          Write-Host "============================================" -ForegroundColor Green
-          Write-Host ""
-          
-          if ($tsIP -and $tsIP -ne "NOT_ASSIGNED" -and $tsIP -ne "ERROR") {
-              Write-Host "✅ CONNECTION READY!" -ForegroundColor Green
-              Write-Host ""
-              Write-Host "📍 CONNECTION DETAILS:" -ForegroundColor Yellow
-              Write-Host "   IP: $tsIP" -ForegroundColor Cyan
-              Write-Host "   Username: $env:RDP_USER" -ForegroundColor Cyan
-              Write-Host "   Password: $env:RDP_PASS" -ForegroundColor Cyan
-              Write-Host ""
-              Write-Host "💻 CONNECT:" -ForegroundColor Yellow
-              Write-Host "   mstsc /v:$tsIP" -ForegroundColor White
-              Write-Host ""
-              Write-Host "🧪 TEST PING:" -ForegroundColor Yellow
-              Write-Host "   ping $tsIP" -ForegroundColor White
-          } else {
-              Write-Host "⚠️ TAILSCALE CONNECTION ISSUE!" -ForegroundColor Red
-              Write-Host ""
-              Write-Host "Tailscale IP: $tsIP" -ForegroundColor Yellow
-              Write-Host ""
-              Write-Host "Possible causes:" -ForegroundColor Yellow
-              Write-Host "1. Auth key is invalid or expired" -ForegroundColor White
-              Write-Host "2. Auth key doesn't have proper permissions" -ForegroundColor White
-              Write-Host "3. Tailscale network configuration issue" -ForegroundColor White
-              Write-Host ""
-              Write-Host "RDP is still configured if you can fix Tailscale:" -ForegroundColor Cyan
-              Write-Host "   Username: $env:RDP_USER" -ForegroundColor Cyan
-              Write-Host "   Password: $env:RDP_PASS" -ForegroundColor Cyan
-          }
-          
-          Write-Host ""
-          Write-Host "============================================" -ForegroundColor Green
-          Write-Host ""
+# ===============================
+# VISUAL PERFORMANCE
+# ===============================
+Set-ItemProperty `
+  -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" `
+  -Name "VisualFXSetting" `
+  -Value 2 -Force
 
-      - name: Keep Alive
-        run: |
-          $endTime = (Get-Date).AddHours(6)
-          
-          Write-Host "⏰ Session running for 6 hours..." -ForegroundColor Cyan
-          Write-Host "📌 Tailscale IP: $env:TAILSCALE_IP" -ForegroundColor Cyan
-          Write-Host ""
-          
-          while ((Get-Date) -lt $endTime) {
-              $remaining = ($endTime - (Get-Date)).ToString("hh\:mm\:ss")
-              
-              # Check services
-              $rdpRunning = (Get-Service -Name TermService).Status -eq 'Running'
-              $tsRunning = (Get-Service -Name Tailscale -ErrorAction SilentlyContinue).Status -eq 'Running'
-              
-              $rdpStatus = if ($rdpRunning) { "✅" } else { "❌" }
-              $tsStatus = if ($tsRunning) { "✅" } else { "❌" }
-              
-              Write-Host "[$((Get-Date).ToString('HH:mm:ss'))] RDP:$rdpStatus TS:$tsStatus | ⏰ $remaining | 📍 $env:TAILSCALE_IP" -ForegroundColor Cyan
-              
-              $wsh = New-Object -ComObject WScript.Shell
-              $wsh.SendKeys('+{F15}')
-              
-              Start-Sleep -Seconds 300
-          }
-          
-          Write-Host ""
-          Write-Host "⏹️ Session ended!" -ForegroundColor Yellow
-```
+Write-Host "Visual effects optimized."
 
----
+# ===============================
+# PRIORITIZE RDP SERVICE
+# ===============================
+Start-Service -Name "TermService"
+Start-Sleep -Seconds 5
 
-## 🔍 **This Debug Version Will Show:**
+$rdpProcess = Get-Process -Name svchost | Where-Object {
+  (Get-CimInstance Win32_Service -Filter "ProcessId = $($_.Id)").Name -contains 'TermService'
+}
 
-1. ✅ **Full Tailscale connection output** - See exactly what's happening
-2. ✅ **Auth key validation** (first 10 chars shown)
-3. ✅ **30 retry attempts** to get IP (instead of 10-20)
-4. ✅ **Detailed error messages** if connection fails
-5. ✅ **Service status checks** - See if Tailscale service is running
-6. ✅ **Network adapter list** - Verify Tailscale adapter exists
-7. ✅ **Continues even if Tailscale fails** - So you can see logs
+if ($rdpProcess) {
+    $rdpProcess.PriorityClass = 'High'
+    Write-Host "RDP priority set to HIGH."
+}
 
----
+# ===============================
+# INSTALL TAILSCALE
+# ===============================
+Write-Host "Installing Tailscale..."
 
-## 🧪 **Check These After Running:**
+Invoke-WebRequest `
+  -Uri https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe `
+  -OutFile tailscale.exe
 
-### **1. Look for this in the logs:**
-```
-✅ Got Tailscale IP: 100.x.x.x
-```
+Start-Process .\tailscale.exe -ArgumentList "/S" -Wait
 
-### **2. If it shows:**
-```
-❌ Failed to get Tailscale IP
-```
-
-**Then check your Tailscale auth key:**
-- Go to https://login.tailscale.com/admin/settings/keys
-- Make sure your auth key:
-  - ✅ Is not expired
-  - ✅ Has "Reusable" enabled
-  - ✅ Has "Ephemeral" disabled (or enabled, both work)
-  - ✅ Is copied correctly into GitHub secrets
-
-### **3. Create a NEW auth key if needed:**
-1. Go to https://login.tailscale.com/admin/settings/keys
-2. Click "Generate auth key"
-3. Enable "Reusable"
-4. Copy the key
-5. Update your GitHub secret `TAILSCALE_AUTH_KEY`
-
----
-
-## 📋 **What to Look For in Logs:**
-```
-Tailscale up output:
-Success
-
-✅ Got Tailscale IP: 100.x.x.x
+Write-Host "Run the following to connect:"
+Write-Host "tailscale up"
+Write-Host ""
+Write-Host "=================================="
+Write-Host "RDP READY"
+Write-Host "=================================="
+Write-Host "Username: rdpadmin"
+Write-Host "Password: UltraFast2024!"
+Write-Host "=================================="
