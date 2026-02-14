@@ -5,7 +5,7 @@ on:
 
 jobs:
   secure-rdp:
-    runs-on: windows-2022  # Latest Windows Server version
+    runs-on: windows-2022
     timeout-minutes: 360
     steps:
       - name: System Optimization
@@ -22,7 +22,7 @@ jobs:
           powercfg /change disk-timeout-ac 0
           powercfg /change hibernate-timeout-ac 0
           
-          # Disable Windows Update (prevents disruption)
+          # Disable Windows Update
           Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
           Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
           
@@ -34,7 +34,7 @@ jobs:
           netsh int tcp set global ecncapability=enabled
           netsh int tcp set global timestamps=disabled
           
-          # Disable unnecessary services for stability
+          # Disable unnecessary services
           $servicesToStop = @('DiagTrack', 'dmwappushservice', 'SysMain', 'WSearch')
           foreach ($service in $servicesToStop) {
               Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
@@ -45,7 +45,7 @@ jobs:
           Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
           
           Write-Host "System optimization complete" -ForegroundColor Green
-          
+
       - name: Install and Configure WSL with Ubuntu
         shell: powershell
         run: |
@@ -70,16 +70,15 @@ jobs:
           $username = "harsh"
           $password = "kali"
           
-          # Launch Ubuntu and configure user non-interactively
           Write-Host "Configuring Ubuntu user..." -ForegroundColor Yellow
           
           # Create a temporary script to set up the user
           $setupScript = @"
-useradd -m -s /bin/bash $username
-echo '${username}:${password}' | chpasswd
-usermod -aG sudo $username
-echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-"@
+          useradd -m -s /bin/bash $username
+          echo '${username}:${password}' | chpasswd
+          usermod -aG sudo $username
+          echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+          "@
           
           $setupScriptPath = "$env:TEMP\wsl_setup.sh"
           $setupScript | Out-File -FilePath $setupScriptPath -Encoding ASCII
@@ -106,10 +105,12 @@ echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
           Write-Host ""
           Write-Host "WSL Status:" -ForegroundColor Cyan
           wsl --list --verbose
-          
+
       - name: Configure RDP for Performance
         shell: powershell
         run: |
+          Write-Host "Configuring RDP..." -ForegroundColor Cyan
+          
           # Enable RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
@@ -131,7 +132,7 @@ echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
           Restart-Service -Name TermService -Force
           
           Write-Host "RDP configured for optimal performance" -ForegroundColor Green
-          
+
       - name: Create RDP User
         shell: powershell
         run: |
@@ -147,7 +148,7 @@ echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
           
           Write-Host "RDP user created successfully" -ForegroundColor Green
-          
+
       - name: Install Tailscale
         shell: powershell
         run: |
@@ -180,7 +181,7 @@ echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
           Start-Sleep -Seconds 10
           
           Write-Host "Tailscale installed successfully" -ForegroundColor Green
-          
+
       - name: Connect Tailscale with Retry
         shell: powershell
         env:
@@ -237,10 +238,7 @@ echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
           netsh advfirewall firewall add rule name="ICMP Allow incoming V4 echo request" protocol=icmpv4:8,any dir=in action=allow
           netsh advfirewall firewall add rule name="ICMP Allow incoming V6 echo request" protocol=icmpv6:8,any dir=in action=allow
           
-          # Disable IPv6 if causing issues (optional)
-          # Disable-NetAdapterBinding -Name "*" -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue
-          
-          # Set DNS to reliable servers (Google DNS)
+          # Set DNS to reliable servers
           $adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}
           foreach ($adapter in $adapters) {
               Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses ("8.8.8.8","8.8.4.4") -ErrorAction SilentlyContinue
@@ -262,7 +260,7 @@ echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
           Write-Host ""
           Write-Host "Testing local ping:" -ForegroundColor Cyan
           ping -n 2 127.0.0.1
-          
+
       - name: Show Connection Info
         shell: powershell
         run: |
@@ -301,13 +299,13 @@ echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
           Write-Host "  RAM: $ram GB" -ForegroundColor White
           Write-Host "  OS : $($os.Caption)" -ForegroundColor White
           Write-Host ""
-          
+
       - name: Keep Alive with Enhanced Monitoring
         shell: powershell
         run: |
           $startTime = Get-Date
           $endTime = $startTime.AddMinutes(358)
-          $checkInterval = 120  # Check every 2 minutes for better stability
+          $checkInterval = 120
           
           Write-Host "Session started at: $startTime" -ForegroundColor Cyan
           Write-Host "Session will end at: $endTime" -ForegroundColor Cyan
@@ -337,7 +335,6 @@ echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
                           Write-Host "  Tailscale: Connected ($($tsStatus.BackendState))" -ForegroundColor Green
                       } else {
                           Write-Host "  Tailscale: $($tsStatus.BackendState)" -ForegroundColor Yellow
-                          # Try to reconnect
                           & $tsPath up
                       }
                       
