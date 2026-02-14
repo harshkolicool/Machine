@@ -1,4 +1,4 @@
-name: RDP Tailscale - Complete Fix
+name: RDP Tailscale - Working
 
 on:
   workflow_dispatch:
@@ -17,7 +17,6 @@ jobs:
           Write-Host "Storage: $([math]::Round(($disk.Used + $disk.Free)/1GB, 2)) GB" -ForegroundColor Cyan
           Write-Host "CPU Cores: $env:NUMBER_OF_PROCESSORS" -ForegroundColor Cyan
           
-          # GPU Info
           $gpu = Get-CimInstance Win32_VideoController
           Write-Host "GPU: $($gpu.Name)" -ForegroundColor Cyan
           Write-Host "============================================" -ForegroundColor Green
@@ -26,18 +25,14 @@ jobs:
         run: |
           Write-Host "🔥 DISABLING ALL FIREWALLS..." -ForegroundColor Red
           
-          # Disable Windows Firewall for all profiles
           Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
           
-          # Disable firewall via registry as backup
           Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\StandardProfile" -Name "EnableFirewall" -Value 0 -Force
           Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\DomainProfile" -Name "EnableFirewall" -Value 0 -Force
           Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\PublicProfile" -Name "EnableFirewall" -Value 0 -Force
           
-          # Using netsh to turn off firewall
           netsh advfirewall set allprofiles state off
           
-          # Stop firewall service
           Stop-Service -Name mpssvc -Force -ErrorAction SilentlyContinue
           Set-Service -Name mpssvc -StartupType Disabled -ErrorAction SilentlyContinue
           
@@ -45,50 +40,33 @@ jobs:
           
       - name: Enable RDP Aggressively
         run: |
-          Write-Host "🖥️ Enabling RDP with ALL settings..." -ForegroundColor Cyan
+          Write-Host "🖥️ Enabling RDP..." -ForegroundColor Cyan
           
-          # Enable Remote Desktop via registry
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          
-          # Disable Network Level Authentication
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          
-          # Set security layer to RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          
-          # Allow connections from any version
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MinEncryptionLevel" -Value 1 -Force
-          
-          # Configure RDP for best performance
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "ColorDepth" -Value 4 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fDisableCam" -Value 0 -Force
-          
-          # Allow unlimited connections
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "MaxInstanceCount" -Value 999999 -Force
           
-          # Enable RDP via Group Policy
+          New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Force -ErrorAction SilentlyContinue
           Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name "fDenyTSConnections" -Value 0 -Force -ErrorAction SilentlyContinue
           
           Write-Host "✅ RDP enabled!" -ForegroundColor Green
           
-      - name: Configure Firewall Rules (Backup)
+      - name: Configure Firewall Rules
         run: |
-          Write-Host "🔧 Adding firewall rules as backup..." -ForegroundColor Cyan
+          Write-Host "🔧 Adding firewall rules..." -ForegroundColor Cyan
           
-          # Enable RDP firewall rule group
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
           
-          # Delete any existing custom rules
           Remove-NetFirewallRule -DisplayName "Allow-RDP*" -ErrorAction SilentlyContinue
           
-          # Create explicit allow rules for RDP
           New-NetFirewallRule -DisplayName "Allow-RDP-TCP" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -Enabled True -Profile Any -ErrorAction SilentlyContinue
           New-NetFirewallRule -DisplayName "Allow-RDP-UDP" -Direction Inbound -Protocol UDP -LocalPort 3389 -Action Allow -Enabled True -Profile Any -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName "Allow-ICMP-All" -Direction Inbound -Protocol ICMPv4 -Action Allow -Enabled True -Profile Any -ErrorAction SilentlyContinue
           
-          # Allow ICMP (ping) from Tailscale
-          New-NetFirewallRule -DisplayName "Allow-ICMP-Tailscale" -Direction Inbound -Protocol ICMPv4 -Action Allow -Enabled True -Profile Any -RemoteAddress 100.64.0.0/10 -ErrorAction SilentlyContinue
-          
-          # Using netsh as additional backup
           netsh advfirewall firewall add rule name="RDP-TCP-In" dir=in action=allow protocol=TCP localport=3389
           netsh advfirewall firewall add rule name="RDP-UDP-In" dir=in action=allow protocol=UDP localport=3389
           netsh advfirewall firewall add rule name="ICMP-Ping" dir=in action=allow protocol=icmpv4
@@ -104,20 +82,15 @@ jobs:
           
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           
-          # Remove user if exists
           Remove-LocalUser -Name $username -ErrorAction SilentlyContinue
           
-          # Create user
           New-LocalUser -Name $username -Password $securePass -AccountNeverExpires -PasswordNeverExpires -UserMayNotChangePassword
           
-          # Add to groups
           Add-LocalGroupMember -Group "Administrators" -Member $username
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
           
-          # Verify
           $user = Get-LocalUser -Name $username
-          Write-Host "User created: $($user.Name)" -ForegroundColor Green
-          Write-Host "Enabled: $($user.Enabled)" -ForegroundColor Green
+          Write-Host "✅ User created: $($user.Name) | Enabled: $($user.Enabled)" -ForegroundColor Green
           
       - name: Configure Auto-Login
         run: |
@@ -140,41 +113,34 @@ jobs:
           
           Write-Host "✅ Auto-login configured!" -ForegroundColor Green
 
-      - name: Start and Verify RDP Service
+      - name: Start RDP Services
         run: |
           Write-Host "🔄 Starting RDP services..." -ForegroundColor Cyan
           
-          # Enable and start Remote Desktop Services
           Set-Service -Name TermService -StartupType Automatic
           Start-Service -Name TermService -ErrorAction Stop
           
-          # Enable and start RDP-related services
           Set-Service -Name UmRdpService -StartupType Automatic -ErrorAction SilentlyContinue
           Start-Service -Name UmRdpService -ErrorAction SilentlyContinue
           
           Set-Service -Name SessionEnv -StartupType Automatic -ErrorAction SilentlyContinue
           Start-Service -Name SessionEnv -ErrorAction SilentlyContinue
           
-          # Wait for service to be ready
           Start-Sleep -Seconds 5
           
-          # Verify TermService is running
           $termService = Get-Service -Name TermService
           if ($termService.Status -ne 'Running') {
               Write-Error "❌ TermService failed to start!"
-              Get-Service -Name TermService | Format-List *
               exit 1
           }
           
-          Write-Host "✅ RDP service is running!" -ForegroundColor Green
+          Write-Host "✅ RDP service running!" -ForegroundColor Green
           
-          # Check if port 3389 is listening
           $listening = Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue
           if ($listening) {
               Write-Host "✅ Port 3389 is LISTENING" -ForegroundColor Green
-              $listening | Select-Object LocalAddress, LocalPort, State | Format-Table
           } else {
-              Write-Host "⚠️ Port 3389 is NOT listening" -ForegroundColor Red
+              Write-Host "⚠️ Port 3389 NOT listening" -ForegroundColor Red
           }
 
       - name: Install Tailscale
@@ -193,34 +159,36 @@ jobs:
           
           Write-Host "✅ Tailscale installed!" -ForegroundColor Green
 
-      - name: Connect to Tailscale
+      - name: Connect to Tailscale (FIXED - No Tags)
         run: |
           Write-Host "🌐 Connecting to Tailscale..." -ForegroundColor Cyan
           
-          # Connect with all flags
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-rdp-$env:GITHUB_RUN_ID --accept-routes --accept-dns=false --advertise-tags=tag:github
+          # FIXED: Removed --advertise-tags flag that was causing the error
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-rdp-$env:GITHUB_RUN_ID --accept-routes --accept-dns=false
           
-          Start-Sleep -Seconds 5
+          Start-Sleep -Seconds 10
           
-          # Get Tailscale IP
+          # Get Tailscale IP with better error handling
           $tsIP = $null
           $retries = 0
           while (-not $tsIP -and $retries -lt 30) {
               Start-Sleep -Seconds 3
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>$null
-              if ($tsIP) {
-                  $tsIP = $tsIP.Trim()
-                  if ($tsIP -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
+              try {
+                  $output = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4 2>&1
+                  if ($output -and $output -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
+                      $tsIP = $output.Trim()
                       break
                   }
-                  $tsIP = $null
+              } catch {
+                  # Ignore errors and retry
               }
               $retries++
               Write-Host "Waiting for Tailscale IP... Attempt $retries/30" -ForegroundColor Yellow
           }
           
           if (-not $tsIP) {
-              Write-Error "❌ Tailscale IP not assigned after 30 attempts"
+              Write-Host "❌ Failed to get Tailscale IP" -ForegroundColor Red
+              Write-Host "Tailscale Status:" -ForegroundColor Yellow
               & "$env:ProgramFiles\Tailscale\tailscale.exe" status
               exit 1
           }
@@ -228,80 +196,69 @@ jobs:
           Write-Host "✅ Tailscale IP: $tsIP" -ForegroundColor Green
           $tsIP | Out-File -FilePath "$env:TEMP\tailscale_ip.txt" -Force
           
-          # Show full Tailscale status
           Write-Host "`n=== Tailscale Status ===" -ForegroundColor Cyan
           & "$env:ProgramFiles\Tailscale\tailscale.exe" status
           Write-Host "========================`n" -ForegroundColor Cyan
 
       - name: Performance Optimizations
         run: |
-          Write-Host "⚡ Applying performance optimizations..." -ForegroundColor Cyan
+          Write-Host "⚡ Applying optimizations..." -ForegroundColor Cyan
           
-          # High Performance power plan
           powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
           powercfg /hibernate off
           
-          # Disable Windows Defender
           Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
           
-          # Network optimizations
           New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Force -ErrorAction SilentlyContinue
           Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Value 0xffffffff -Force
           
           netsh int tcp set global autotuninglevel=normal
           netsh int tcp set global chimney=enabled
           netsh int tcp set global congestionprovider=ctcp
+          netsh int tcp set global rss=enabled
           
-          # GPU acceleration
+          $adapters = Get-NetAdapter | Where-Object {$_.Status -eq "Up"}
+          foreach ($adapter in $adapters) {
+            Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses ("1.1.1.1","8.8.8.8") -ErrorAction SilentlyContinue
+          }
+          
           New-Item -Path "HKCU:\Software\Microsoft\Avalon.Graphics" -Force -ErrorAction SilentlyContinue
           Set-ItemProperty -Path "HKCU:\Software\Microsoft\Avalon.Graphics" -Name "DisableHWAcceleration" -Value 0 -Force -ErrorAction SilentlyContinue
           
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "fEnableWddmDriver" -Value 1 -Force -ErrorAction SilentlyContinue
+          
           Write-Host "✅ Optimizations applied!" -ForegroundColor Green
 
-      - name: Final Connectivity Test
+      - name: Final Diagnostics
         run: |
           $tsIP = Get-Content "$env:TEMP\tailscale_ip.txt" -Raw
           $tsIP = $tsIP.Trim()
           
           Write-Host "`n=== FINAL DIAGNOSTICS ===" -ForegroundColor Yellow
           
-          # Check RDP service
-          Write-Host "`n1. RDP Service Status:" -ForegroundColor Cyan
+          Write-Host "`n1. RDP Service:" -ForegroundColor Cyan
           Get-Service -Name TermService | Select-Object Name, Status, StartType | Format-Table
           
-          # Check listening ports
           Write-Host "2. Listening Ports:" -ForegroundColor Cyan
           Get-NetTCPConnection -LocalPort 3389 -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress, LocalPort, State | Format-Table
           
-          # Check firewall status
           Write-Host "3. Firewall Status:" -ForegroundColor Cyan
           Get-NetFirewallProfile | Select-Object Name, Enabled | Format-Table
           
-          # Check user
-          Write-Host "4. RDP User Status:" -ForegroundColor Cyan
-          Get-LocalUser -Name rdpuser | Select-Object Name, Enabled, PasswordRequired | Format-Table
+          Write-Host "4. RDP User:" -ForegroundColor Cyan
+          Get-LocalUser -Name rdpuser | Select-Object Name, Enabled | Format-Table
           
-          # Test local RDP
-          Write-Host "5. Testing local RDP connection..." -ForegroundColor Cyan
+          Write-Host "5. Local RDP Test:" -ForegroundColor Cyan
           $localTest = Test-NetConnection -ComputerName localhost -Port 3389 -InformationLevel Quiet -WarningAction SilentlyContinue
           if ($localTest) {
-              Write-Host "   ✅ RDP is accepting connections locally" -ForegroundColor Green
+              Write-Host "   ✅ RDP accepting connections" -ForegroundColor Green
           } else {
-              Write-Host "   ❌ RDP is NOT accepting connections" -ForegroundColor Red
-          }
-          
-          # Test Tailscale connectivity
-          Write-Host "6. Testing Tailscale IP connectivity..." -ForegroundColor Cyan
-          $tsTest = Test-NetConnection -ComputerName $tsIP -Port 3389 -InformationLevel Quiet -WarningAction SilentlyContinue
-          if ($tsTest) {
-              Write-Host "   ✅ RDP is accessible via Tailscale" -ForegroundColor Green
-          } else {
-              Write-Host "   ⚠️ Cannot test from same machine (this is normal)" -ForegroundColor Yellow
+              Write-Host "   ❌ RDP NOT accepting connections" -ForegroundColor Red
           }
           
           Write-Host "`n========================`n" -ForegroundColor Yellow
 
-      - name: Display Connection Information
+      - name: Display Connection Info
         run: |
           $tsIP = Get-Content "$env:TEMP\tailscale_ip.txt" -Raw
           $tsIP = $tsIP.Trim()
@@ -312,21 +269,19 @@ jobs:
           Write-Host "============================================" -ForegroundColor Green
           Write-Host ""
           Write-Host "📍 CONNECTION DETAILS:" -ForegroundColor Yellow
-          Write-Host "   IP Address: $tsIP" -ForegroundColor Cyan
+          Write-Host "   IP: $tsIP" -ForegroundColor Cyan
           Write-Host "   Username: rdpuser" -ForegroundColor Cyan
           Write-Host "   Password: RDP@2024#Secure" -ForegroundColor Cyan
           Write-Host ""
-          Write-Host "💻 CONNECT USING:" -ForegroundColor Yellow
+          Write-Host "💻 CONNECT:" -ForegroundColor Yellow
           Write-Host "   Windows: mstsc /v:$tsIP" -ForegroundColor White
-          Write-Host "   Mac: Microsoft Remote Desktop app" -ForegroundColor White
-          Write-Host "   Linux: rdesktop $tsIP or xfreerdp /v:$tsIP /u:rdpuser" -ForegroundColor White
+          Write-Host "   Mac: Microsoft Remote Desktop" -ForegroundColor White
+          Write-Host "   Linux: rdesktop $tsIP" -ForegroundColor White
           Write-Host ""
           Write-Host "✅ STATUS:" -ForegroundColor Yellow
-          Write-Host "   Firewall: COMPLETELY DISABLED" -ForegroundColor Green
-          Write-Host "   RDP Service: RUNNING" -ForegroundColor Green
-          Write-Host "   Port 3389: LISTENING" -ForegroundColor Green
+          Write-Host "   Firewall: DISABLED" -ForegroundColor Green
+          Write-Host "   RDP: RUNNING" -ForegroundColor Green
           Write-Host "   Tailscale: CONNECTED" -ForegroundColor Green
-          Write-Host "   Auto-Login: ENABLED" -ForegroundColor Green
           Write-Host "   Performance: OPTIMIZED" -ForegroundColor Green
           Write-Host ""
           Write-Host "============================================" -ForegroundColor Green
@@ -339,25 +294,21 @@ jobs:
           
           $endTime = (Get-Date).AddHours(6)
           
-          Write-Host "🔥 Server running for 6 hours..." -ForegroundColor Green
-          Write-Host "📌 Connect to: $tsIP" -ForegroundColor Cyan
-          Write-Host ""
+          Write-Host "🔥 Running for 6 hours..." -ForegroundColor Green
+          Write-Host "📌 Connect to: $tsIP`n" -ForegroundColor Cyan
           
           while ((Get-Date) -lt $endTime) {
             $remaining = ($endTime - (Get-Date)).ToString("hh\:mm\:ss")
             
-            # Verify RDP is still running
             $rdpRunning = Get-Service -Name TermService | Where-Object {$_.Status -eq 'Running'}
             $status = if ($rdpRunning) { "✅ ONLINE" } else { "❌ OFFLINE" }
             
-            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $status | ⏰ Time: $remaining | 📍 IP: $tsIP" -ForegroundColor Cyan
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $status | ⏰ $remaining | 📍 $tsIP" -ForegroundColor Cyan
             
-            # Keep system active
             $wsh = New-Object -ComObject WScript.Shell
             $wsh.SendKeys('+{F15}')
             
-            Start-Sleep -Seconds 300  # Update every 5 minutes
+            Start-Sleep -Seconds 300
           }
           
-          Write-Host ""
-          Write-Host "⏹️ 6 hour limit reached!" -ForegroundColor Yellow
+          Write-Host "`n⏹️ 6 hour limit reached!" -ForegroundColor Yellow
