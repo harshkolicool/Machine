@@ -1,0 +1,384 @@
+name: RDP-Optimized
+on:
+  workflow_dispatch:
+jobs:
+  secure-rdp:
+    runs-on: windows-2022  # Latest Windows Server version
+    timeout-minutes: 360
+    steps:
+      - name: System Optimization
+        shell: powershell
+        run: |
+          Write-Host "Optimizing system for performance and stability..." -ForegroundColor Cyan
+          
+          # Set High Performance power plan
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+          
+          # Disable sleep and hibernation
+          powercfg /change monitor-timeout-ac 0
+          powercfg /change standby-timeout-ac 0
+          powercfg /change disk-timeout-ac 0
+          powercfg /change hibernate-timeout-ac 0
+          
+          # Disable Windows Update (prevents disruption)
+          Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+          Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
+          
+          # Optimize network settings
+          netsh int tcp set global autotuninglevel=normal
+          netsh int tcp set global chimney=enabled
+          netsh int tcp set global dca=enabled
+          netsh int tcp set global netdma=enabled
+          netsh int tcp set global ecncapability=enabled
+          netsh int tcp set global timestamps=disabled
+          
+          # Disable unnecessary services for stability
+          $servicesToStop = @('DiagTrack', 'dmwappushservice', 'SysMain', 'WSearch')
+          foreach ($service in $servicesToStop) {
+              Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
+              Set-Service -Name $service -StartupType Disabled -ErrorAction SilentlyContinue
+          }
+          
+          # Clear temp files
+          Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "System optimization complete" -ForegroundColor Green
+          
+      - name: Install and Configure WSL with Ubuntu
+        shell: powershell
+        run: |
+          Write-Host "Setting up WSL and Ubuntu..." -ForegroundColor Cyan
+          
+          # Update WSL to latest version
+          Write-Host "Updating WSL..." -ForegroundColor Yellow
+          wsl --update
+          Start-Sleep -Seconds 5
+          
+          # Set WSL default version to 2
+          Write-Host "Setting WSL default version to 2..." -ForegroundColor Yellow
+          wsl --set-default-version 2
+          Start-Sleep -Seconds 3
+          
+          # Install Ubuntu distribution
+          Write-Host "Installing Ubuntu distribution..." -ForegroundColor Yellow
+          wsl --install -d Ubuntu --no-launch
+          Start-Sleep -Seconds 10
+          
+          # Create user configuration script
+          $username = "harsh"
+          $password = "kali"
+          
+          # Launch Ubuntu and configure user non-interactively
+          Write-Host "Configuring Ubuntu user..." -ForegroundColor Yellow
+          
+          # Create a temporary script to set up the user
+          $setupScript = @"
+useradd -m -s /bin/bash $username
+echo '${username}:${password}' | chpasswd
+usermod -aG sudo $username
+echo '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+"@
+          
+          $setupScriptPath = "$env:TEMP\wsl_setup.sh"
+          $setupScript | Out-File -FilePath $setupScriptPath -Encoding ASCII
+          
+          # Run the setup as root
+          wsl -d Ubuntu -u root bash -c "bash /mnt/c/Users/runneradmin/AppData/Local/Temp/wsl_setup.sh"
+          Start-Sleep -Seconds 3
+          
+          # Set the default user for Ubuntu
+          ubuntu config --default-user $username
+          
+          # Run system updates and install packages
+          Write-Host "Updating Ubuntu and installing packages..." -ForegroundColor Yellow
+          wsl -d Ubuntu -u $username bash -c "sudo apt-get update -y && sudo apt-get dist-upgrade -y && sudo apt-get install build-essential gdb python-is-python3 -y && sudo apt install python3-pip -y"
+          
+          # Clean up
+          Remove-Item $setupScriptPath -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "WSL and Ubuntu setup complete" -ForegroundColor Green
+          Write-Host "Username: $username" -ForegroundColor Cyan
+          Write-Host "Password: $password" -ForegroundColor Cyan
+          
+          # Show WSL status
+          Write-Host ""
+          Write-Host "WSL Status:" -ForegroundColor Cyan
+          wsl --list --verbose
+          
+      - name: Configure RDP for Performance
+        shell: powershell
+        run: |
+          # Enable RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          
+          # Optimize RDP performance settings
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxInstanceCount" -Value 999999 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxConnectionTime" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxDisconnectionTime" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxIdleTime" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fInheritMaxSessionTime" -Value 0 -Force
+          
+          # Enable best visual performance for RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "ColorDepth" -Value 4 -Force
+          
+          # Enable firewall rules
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          # Restart RDP service
+          Restart-Service -Name TermService -Force
+          
+          Write-Host "RDP configured for optimal performance" -ForegroundColor Green
+          
+      - name: Create RDP User
+        shell: powershell
+        run: |
+          $username = "rdpadmin"
+          $password = "P@ssword!q218"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          
+          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name $username -Password $securePass -PasswordNeverExpires -AccountNeverExpires -UserMayNotChangePassword
+          }
+          
+          Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+          
+          Write-Host "RDP user created successfully" -ForegroundColor Green
+          
+      - name: Install Tailscale
+        shell: powershell
+        run: |
+          Write-Host "Installing Tailscale..." -ForegroundColor Cyan
+          
+          $installer = "$env:TEMP\tailscale.msi"
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          
+          # Download with retry
+          $maxRetries = 3
+          $downloaded = $false
+          for ($i = 1; $i -le $maxRetries; $i++) {
+              try {
+                  Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile $installer -UseBasicParsing -TimeoutSec 60
+                  $downloaded = $true
+                  break
+              } catch {
+                  Write-Host "Download attempt $i failed, retrying..." -ForegroundColor Yellow
+                  Start-Sleep -Seconds 5
+              }
+          }
+          
+          if (-not $downloaded) {
+              Write-Error "Failed to download Tailscale"
+              exit 1
+          }
+          
+          Start-Process msiexec.exe -ArgumentList "/i `"$installer`" /quiet /norestart" -Wait
+          Remove-Item $installer -Force
+          Start-Sleep -Seconds 10
+          
+          Write-Host "Tailscale installed successfully" -ForegroundColor Green
+          
+      - name: Connect Tailscale with Retry
+        shell: powershell
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          Write-Host "Connecting to Tailscale..." -ForegroundColor Cyan
+          
+          $tsPath = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          
+          # Wait for Tailscale service to be ready
+          $service = Get-Service -Name Tailscale -ErrorAction SilentlyContinue
+          $timeout = 30
+          $elapsed = 0
+          while ((!$service -or $service.Status -ne 'Running') -and $elapsed -lt $timeout) {
+              Start-Sleep -Seconds 2
+              $elapsed += 2
+              $service = Get-Service -Name Tailscale -ErrorAction SilentlyContinue
+          }
+          
+          # Connect with optimal settings
+          & $tsPath up --authkey=$env:TAILSCALE_AUTH_KEY --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes --shields-up=false --advertise-exit-node=false --accept-dns=false
+          
+          Start-Sleep -Seconds 20
+          
+          # Get IP with retry
+          $maxRetries = 10
+          $tsIP = $null
+          for ($i = 1; $i -le $maxRetries; $i++) {
+              $tsIP = & $tsPath ip -4
+              if ($tsIP -and $tsIP -match '^\d+\.\d+\.\d+\.\d+$') { 
+                  break 
+              }
+              Write-Host "Retry $i/$maxRetries - Waiting for Tailscale IP..." -ForegroundColor Yellow
+              Start-Sleep -Seconds 5
+          }
+          
+          if (-not $tsIP) {
+              Write-Error "Failed to obtain Tailscale IP after $maxRetries retries"
+              & $tsPath status
+              exit 1
+          }
+          
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          
+          Write-Host "Tailscale connected successfully: $tsIP" -ForegroundColor Green
+          & $tsPath status
+
+      - name: Network Stability Optimization
+        shell: powershell
+        run: |
+          Write-Host "Optimizing network stability..." -ForegroundColor Cyan
+          
+          # Enable ICMP (Ping)
+          netsh advfirewall firewall add rule name="ICMP Allow incoming V4 echo request" protocol=icmpv4:8,any dir=in action=allow
+          netsh advfirewall firewall add rule name="ICMP Allow incoming V6 echo request" protocol=icmpv6:8,any dir=in action=allow
+          
+          # Disable IPv6 if causing issues (optional)
+          # Disable-NetAdapterBinding -Name "*" -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue
+          
+          # Set DNS to reliable servers (Google DNS)
+          $adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}
+          foreach ($adapter in $adapters) {
+              Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses ("8.8.8.8","8.8.4.4") -ErrorAction SilentlyContinue
+          }
+          
+          # Flush DNS cache
+          Clear-DnsClientCache
+          
+          # Reset network stack for stability
+          netsh winsock reset catalog
+          netsh int ip reset
+          
+          # Increase network buffer sizes
+          netsh int tcp set global autotuninglevel=normal
+          
+          Write-Host "Network optimization complete" -ForegroundColor Green
+          
+          # Test ping
+          Write-Host ""
+          Write-Host "Testing local ping:" -ForegroundColor Cyan
+          ping -n 2 127.0.0.1
+          
+      - name: Show Connection Info
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host "  RDP CONNECTION READY - OPTIMIZED" -ForegroundColor Green
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host "Tailscale IP : $env:TAILSCALE_IP" -ForegroundColor Cyan
+          Write-Host "Username     : rdpadmin" -ForegroundColor Cyan
+          Write-Host "Password     : P@ssword!q218" -ForegroundColor Cyan
+          Write-Host "OS Version   : Windows Server 2022" -ForegroundColor Yellow
+          Write-Host "Max Duration : 6 hours" -ForegroundColor Yellow
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host "Performance  : High Performance Mode" -ForegroundColor Green
+          Write-Host "Network      : Optimized & Stable" -ForegroundColor Green
+          Write-Host "Ping         : Enabled" -ForegroundColor Green
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "WSL Ubuntu Info:" -ForegroundColor Cyan
+          Write-Host "  Username   : harsh" -ForegroundColor White
+          Write-Host "  Password   : kali" -ForegroundColor White
+          Write-Host "  Access via : wsl -d Ubuntu -u harsh" -ForegroundColor White
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "To connect:" -ForegroundColor Yellow
+          Write-Host "  mstsc /v:$env:TAILSCALE_IP" -ForegroundColor White
+          Write-Host ""
+          
+          # Show system info
+          $os = Get-WmiObject -Class Win32_OperatingSystem
+          $cpu = Get-WmiObject -Class Win32_Processor | Select-Object -First 1
+          $ram = [math]::Round($os.TotalVisibleMemorySize / 1MB, 2)
+          
+          Write-Host "System Specifications:" -ForegroundColor Cyan
+          Write-Host "  CPU: $($cpu.Name)" -ForegroundColor White
+          Write-Host "  RAM: $ram GB" -ForegroundColor White
+          Write-Host "  OS : $($os.Caption)" -ForegroundColor White
+          Write-Host ""
+          
+      - name: Keep Alive with Enhanced Monitoring
+        shell: powershell
+        run: |
+          $startTime = Get-Date
+          $endTime = $startTime.AddMinutes(358)
+          $checkInterval = 120  # Check every 2 minutes for better stability
+          
+          Write-Host "Session started at: $startTime" -ForegroundColor Cyan
+          Write-Host "Session will end at: $endTime" -ForegroundColor Cyan
+          Write-Host "==========================================" -ForegroundColor Cyan
+          Write-Host ""
+          
+          $lastHealthCheck = Get-Date
+          
+          while ((Get-Date) -lt $endTime) {
+              $now = Get-Date
+              $elapsed = [math]::Round(($now - $startTime).TotalMinutes, 1)
+              $remaining = [math]::Round(($endTime - $now).TotalMinutes, 1)
+              
+              Write-Host "[$($now.ToString('HH:mm:ss'))] Active | Elapsed: $elapsed min | Remaining: $remaining min" -ForegroundColor Green
+              
+              # Health check every 10 minutes
+              if (($now - $lastHealthCheck).TotalMinutes -ge 10) {
+                  Write-Host ""
+                  Write-Host "--- Health Check ---" -ForegroundColor Cyan
+                  
+                  try {
+                      # Tailscale status
+                      $tsPath = "$env:ProgramFiles\Tailscale\tailscale.exe"
+                      $tsStatus = & $tsPath status --json | ConvertFrom-Json
+                      
+                      if ($tsStatus.BackendState -eq "Running") {
+                          Write-Host "  Tailscale: Connected ($($tsStatus.BackendState))" -ForegroundColor Green
+                      } else {
+                          Write-Host "  Tailscale: $($tsStatus.BackendState)" -ForegroundColor Yellow
+                          # Try to reconnect
+                          & $tsPath up
+                      }
+                      
+                      # RDP Service
+                      $rdpService = Get-Service -Name TermService
+                      if ($rdpService.Status -eq "Running") {
+                          Write-Host "  RDP Service: Running" -ForegroundColor Green
+                      } else {
+                          Write-Host "  RDP Service: $($rdpService.Status) - Restarting..." -ForegroundColor Yellow
+                          Restart-Service -Name TermService -Force
+                      }
+                      
+                      # Network connectivity
+                      $pingTest = Test-Connection -ComputerName 8.8.8.8 -Count 1 -Quiet -ErrorAction SilentlyContinue
+                      if ($pingTest) {
+                          Write-Host "  Internet: Connected" -ForegroundColor Green
+                      } else {
+                          Write-Host "  Internet: Check failed" -ForegroundColor Yellow
+                      }
+                      
+                      # Memory usage
+                      $os = Get-WmiObject -Class Win32_OperatingSystem
+                      $memUsed = [math]::Round((($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize) * 100, 1)
+                      Write-Host "  Memory Usage: $memUsed%" -ForegroundColor $(if($memUsed -lt 80){'Green'}else{'Yellow'})
+                      
+                      # CPU usage
+                      $cpu = Get-WmiObject -Class Win32_Processor | Measure-Object -Property LoadPercentage -Average
+                      Write-Host "  CPU Usage: $([math]::Round($cpu.Average, 1))%" -ForegroundColor Green
+                      
+                  } catch {
+                      Write-Host "  Health check error: $_" -ForegroundColor Red
+                  }
+                  
+                  Write-Host "--- End Health Check ---" -ForegroundColor Cyan
+                  Write-Host ""
+                  $lastHealthCheck = $now
+              }
+              
+              Start-Sleep -Seconds $checkInterval
+          }
+          
+          Write-Host ""
+          Write-Host "==========================================" -ForegroundColor Yellow
+          Write-Host "Maximum session duration reached" -ForegroundColor Yellow
+          Write-Host "Total runtime: $([math]::Round(($now - $startTime).TotalMinutes, 1)) minutes" -ForegroundColor Yellow
+          Write-Host "==========================================" -ForegroundColor Yellow
