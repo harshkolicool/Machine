@@ -1,163 +1,126 @@
-name: Windows Latest Max Performance RDP
+Write-Host "Starting Complete Self-Hosted RDP Setup..." -ForegroundColor Cyan
 
-on:
-  workflow_dispatch:
+# ==========================================================
+# USER CONFIGURATION
+# ==========================================================
+$username = "rdpadmin"
+$password = "P@assword!q218"
+$securePassword = ConvertTo-SecureString $password -AsPlainText -Force
 
-jobs:
-  setup-rdp:
-    runs-on: windows-latest
-    timeout-minutes: 360
+# ==========================================================
+# CREATE ADMIN USER
+# ==========================================================
+if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+    New-LocalUser -Name $username `
+        -Password $securePassword `
+        -FullName "RDP Administrator" `
+        -Description "High Performance RDP Account" `
+        -PasswordNeverExpires `
+        -UserMayNotChangePassword
+}
 
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
 
-    # ====================================================
-    # SYSTEM INFO
-    # ====================================================
-    - name: Show System Info
-      shell: powershell
-      run: |
-        Write-Host "===== SYSTEM INFO ====="
-        systeminfo | findstr /B /C:"OS Name" /C:"OS Version"
-        Get-CimInstance Win32_Processor | Select Name,NumberOfCores,NumberOfLogicalProcessors
-        Get-CimInstance Win32_OperatingSystem | Select TotalVisibleMemorySize
+Write-Host "User configured." -ForegroundColor Green
 
-    # ====================================================
-    # ULTIMATE PERFORMANCE
-    # ====================================================
-    - name: Enable Ultimate Performance
-      shell: powershell
-      run: |
-        $scheme = powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
-        $guid = ($scheme -split ' ')[3]
-        powercfg /s $guid
-        Write-Host "Ultimate Performance Enabled"
+# ==========================================================
+# ENABLE RDP
+# ==========================================================
+Set-ItemProperty `
+  -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+  -Name "fDenyTSConnections" -Value 0
 
-    # ====================================================
-    # NETWORK STABILITY OPTIMIZATION
-    # ====================================================
-    - name: Optimize Network
-      shell: powershell
-      run: |
-        netsh int tcp set global autotuninglevel=normal
-        netsh int tcp set global rss=enabled
-        netsh int tcp set global chimney=enabled
-        netsh int tcp set global ecncapability=enabled
-        netsh int tcp set global timestamps=disabled
-        netsh int tcp set global initialRto=2000
-        Write-Host "Network optimized for stability"
+Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
 
-    # ====================================================
-    # CREATE RDP USER
-    # ====================================================
-    - name: Create RDP User
-      shell: powershell
-      run: |
-        $username = "rdpadmin"
-        $password = "P@assword!q218"
-        $secure = ConvertTo-SecureString $password -AsPlainText -Force
+Write-Host "RDP enabled." -ForegroundColor Green
 
-        if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-            New-LocalUser -Name $username `
-              -Password $secure `
-              -PasswordNeverExpires `
-              -UserMayNotChangePassword
-        }
+# ==========================================================
+# ENABLE ULTIMATE PERFORMANCE POWER PLAN
+# ==========================================================
+$scheme = powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
+$guid = ($scheme -split ' ')[3]
+powercfg /s $guid
 
-        Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
-        Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+Write-Host "Ultimate Performance activated." -ForegroundColor Green
 
-        Write-Host "RDP user created"
+# ==========================================================
+# NETWORK STABILITY OPTIMIZATION
+# ==========================================================
+netsh int tcp set global autotuninglevel=normal
+netsh int tcp set global rss=enabled
+netsh int tcp set global chimney=enabled
+netsh int tcp set global ecncapability=enabled
+netsh int tcp set global timestamps=disabled
+netsh int tcp set global initialRto=2000
 
-    # ====================================================
-    # ENABLE RDP
-    # ====================================================
-    - name: Enable RDP
-      shell: powershell
-      run: |
-        Set-ItemProperty `
-          -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-          -Name "fDenyTSConnections" -Value 0
+Write-Host "Network optimized." -ForegroundColor Green
 
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Write-Host "RDP Enabled"
+# ==========================================================
+# RDP PERFORMANCE TUNING
+# ==========================================================
+$policyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+New-Item -Path $policyPath -Force -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $policyPath -Name "bEnforceGpuPreference" -Value 1 -Type DWord -Force
 
-    # ====================================================
-    # RDP PERFORMANCE TUNING
-    # ====================================================
-    - name: Optimize RDP Rendering
-      shell: powershell
-      run: |
-        $policyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
-        New-Item -Path $policyPath -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path $policyPath -Name "bEnforceGpuPreference" -Value 1 -Type DWord -Force
+Set-ItemProperty `
+  -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" `
+  -Name "VisualFXSetting" `
+  -Value 2 -Force
 
-        Set-ItemProperty `
-          -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" `
-          -Name "VisualFXSetting" `
-          -Value 2 -Force
+# Start RDP service
+Start-Service -Name "TermService"
+Start-Sleep -Seconds 5
 
-        Start-Service -Name "TermService"
-        Start-Sleep -Seconds 5
+# Set RDP service priority to High
+$rdpProcess = Get-Process -Name svchost | Where-Object {
+  (Get-CimInstance Win32_Service -Filter "ProcessId = $($_.Id)").Name -contains 'TermService'
+}
 
-        Write-Host "RDP optimized"
+if ($rdpProcess) {
+    $rdpProcess.PriorityClass = 'High'
+}
 
-    # ====================================================
-    # INSTALL TAILSCALE
-    # ====================================================
-    - name: Install Tailscale
-      shell: powershell
-      run: |
-        Invoke-WebRequest `
-          -Uri https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe `
-          -OutFile tailscale-setup.exe
+Write-Host "RDP optimized for performance." -ForegroundColor Green
 
-        Start-Process .\tailscale-setup.exe -ArgumentList "/S" -Wait
-        Write-Host "Tailscale installed"
+# ==========================================================
+# INSTALL TAILSCALE
+# ==========================================================
+Write-Host "Installing Tailscale..." -ForegroundColor Yellow
 
-    # ====================================================
-    # CONNECT TAILSCALE
-    # ====================================================
-    - name: Connect Tailscale
-      shell: powershell
-      env:
-        TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
-      run: |
-        $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
+Invoke-WebRequest `
+  -Uri https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe `
+  -OutFile tailscale-setup.exe
 
-        if (-not (Test-Path $tailscalePath)) {
-            Write-Error "Tailscale not found"
-            exit 1
-        }
+Start-Process .\tailscale-setup.exe -ArgumentList "/S" -Wait
 
-        & "$tailscalePath" up --authkey $env:TAILSCALE_AUTH_KEY --accept-routes
-        Write-Host "Connected to Tailscale"
+Write-Host "Tailscale installed." -ForegroundColor Green
 
-    # ====================================================
-    # SHOW INFO
-    # ====================================================
-    - name: Show RDP Info
-      shell: powershell
-      run: |
-        $tailscalePath = "C:\Program Files\Tailscale\tailscale.exe"
-        $ip = & "$tailscalePath" ip -4
+# ==========================================================
+# SET TAILSCALE TO AUTO START
+# ==========================================================
+Set-Service -Name Tailscale -StartupType Automatic
+Start-Service Tailscale
 
-        Write-Host ""
-        Write-Host "======================================"
-        Write-Host "WINDOWS-LATEST RDP READY"
-        Write-Host "======================================"
-        Write-Host ""
-        Write-Host "RDP Address: $ip"
-        Write-Host "Username: rdpadmin"
-        Write-Host "Password: P@assword!q218"
-        Write-Host ""
-        Write-Host "Session active for 6 hours"
+Write-Host "Tailscale service set to auto-start." -ForegroundColor Green
 
-    # ====================================================
-    # KEEP ALIVE (MAX 6 HOURS)
-    # ====================================================
-    - name: Keep Session Alive
-      shell: powershell
-      run: |
-        Start-Sleep -Seconds 21400
+# ==========================================================
+# FINAL OUTPUT
+# ==========================================================
+Write-Host ""
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host "SELF-HOSTED RDP SETUP COMPLETE" -ForegroundColor Cyan
+Write-Host "=============================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Next step:"
+Write-Host "Run: tailscale up"
+Write-Host ""
+Write-Host "Then get IP using:"
+Write-Host "tailscale ip -4"
+Write-Host ""
+Write-Host "Login Details:"
+Write-Host "Username: rdpadmin"
+Write-Host "Password: P@assword!q218"
+Write-Host ""
+Write-Host "Reboot recommended."
+Write-Host ""
