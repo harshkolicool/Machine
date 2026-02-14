@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
 jobs:
   secure-rdp:
-    runs-on: windows-2019  # More stable than windows-2022
+    runs-on: windows-2022  # Latest Windows Server version
     timeout-minutes: 360
     steps:
       - name: System Optimization
@@ -210,7 +210,7 @@ jobs:
           Write-Host "Tailscale IP : $env:TAILSCALE_IP" -ForegroundColor Cyan
           Write-Host "Username     : rdpadmin" -ForegroundColor Cyan
           Write-Host "Password     : P@ssword!q218" -ForegroundColor Cyan
-          Write-Host "OS Version   : Windows Server 2019" -ForegroundColor Yellow
+          Write-Host "OS Version   : Windows Server 2022" -ForegroundColor Yellow
           Write-Host "Max Duration : 6 hours" -ForegroundColor Yellow
           Write-Host "==========================================" -ForegroundColor Green
           Write-Host "Performance  : High Performance Mode" -ForegroundColor Green
