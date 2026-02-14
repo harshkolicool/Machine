@@ -1,253 +1,316 @@
-name: Playit RDP Tunnel - Optimized
+name: RDP Tailscale - Optimized
+
 on:
   workflow_dispatch:
+
 jobs:
-  setup-rdp-tunnel:
+  secure-rdp:
     runs-on: windows-latest
     timeout-minutes: 360
-    
+
     steps:
-    - name: Check out the repository
-      uses: actions/checkout@v4
+      - name: System Information
+        run: |
+          Write-Host "=== SYSTEM SPECIFICATIONS ===" -ForegroundColor Green
+          Get-ComputerInfo | Select-Object CsProcessors, CsTotalPhysicalMemory, OsArchitecture
+          $disk = Get-PSDrive C
+          Write-Host "Storage: $([math]::Round(($disk.Used + $disk.Free)/1GB, 2)) GB" -ForegroundColor Cyan
+          Write-Host "CPU Cores: $env:NUMBER_OF_PROCESSORS" -ForegroundColor Cyan
+          
+          # GPU Info
+          $gpu = Get-CimInstance Win32_VideoController
+          Write-Host "GPU: $($gpu.Name)" -ForegroundColor Cyan
+          Write-Host "============================================" -ForegroundColor Green
+          
+      - name: Optimize Windows for Maximum Performance
+        run: |
+          # Set power plan to High Performance
+          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+          
+          # Disable hibernation
+          powercfg /hibernate off
+          
+          # Disable Windows Defender
+          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+          
+          # Optimize virtual memory
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "PagingFiles" -Value "C:\pagefile.sys 8192 16384" -Force -ErrorAction SilentlyContinue
+          
+          # Disable unnecessary services
+          $services = @("DiagTrack", "dmwappushservice", "WSearch", "SysMain")
+          foreach ($service in $services) {
+            Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
+          }
+          
+          Write-Host "✅ Performance optimizations applied!" -ForegroundColor Green
+          
+      - name: Network Optimization
+        run: |
+          Write-Host "🌐 Optimizing Network Settings..." -ForegroundColor Cyan
+          
+          # Disable network throttling
+          New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Value 0xffffffff -Force
+          
+          # Enable TCP optimizations
+          netsh int tcp set global autotuninglevel=normal
+          netsh int tcp set global chimney=enabled
+          netsh int tcp set global dca=enabled
+          netsh int tcp set global netdma=enabled
+          netsh int tcp set global congestionprovider=ctcp
+          netsh int tcp set global ecncapability=enabled
+          netsh int tcp set global rss=enabled
+          netsh int tcp set global fastopen=enabled
+          netsh int tcp set global timestamps=disabled
+          
+          # Set DNS to fast servers
+          $adapters = Get-NetAdapter | Where-Object {$_.Status -eq "Up"}
+          foreach ($adapter in $adapters) {
+            Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses ("1.1.1.1","8.8.8.8") -ErrorAction SilentlyContinue
+          }
+          
+          # Clear DNS cache
+          ipconfig /flushdns
+          
+          Write-Host "✅ Network optimized!" -ForegroundColor Green
+          
+      - name: Enable GPU Acceleration
+        run: |
+          Write-Host "🎮 Enabling GPU Acceleration..." -ForegroundColor Cyan
+          
+          # Get GPU information
+          $gpu = Get-CimInstance Win32_VideoController
+          Write-Host "Detected GPU: $($gpu.Name)" -ForegroundColor Yellow
+          
+          # Enable hardware acceleration
+          New-Item -Path "HKCU:\Software\Microsoft\Avalon.Graphics" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKCU:\Software\Microsoft\Avalon.Graphics" -Name "DisableHWAcceleration" -Value 0 -Force -ErrorAction SilentlyContinue
+          
+          # Enable GPU acceleration for RDP
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "fEnableWddmDriver" -Value 1 -Force -ErrorAction SilentlyContinue
+          
+          # Enable hardware graphics acceleration
+          New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Value 2 -Force -ErrorAction SilentlyContinue
+          
+          # Disable GPU power saving
+          powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE 0
+          powercfg /setactive SCHEME_CURRENT
+          
+          # Enable DirectX acceleration
+          New-Item -Path "HKLM:\SOFTWARE\Microsoft\DirectDraw" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\DirectDraw" -Name "EmulationOnly" -Value 0 -Force -ErrorAction SilentlyContinue
+          New-Item -Path "HKLM:\SOFTWARE\Microsoft\Direct3D" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Direct3D" -Name "DisableDXMaximizedWindowedMode" -Value 0 -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "✅ GPU acceleration enabled!" -ForegroundColor Green
+          
+      - name: Clear Temp Files
+        run: |
+          Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+          
+          Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Start-Service -Name wuauserv -ErrorAction SilentlyContinue
+          
+          Write-Host "✅ Storage cleaned!" -ForegroundColor Green
+
+      - name: Configure Core RDP Settings
+        run: |
+          Write-Host "🖥️ Configuring RDP..." -ForegroundColor Cyan
+          
+          # Enable Remote Desktop
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+
+          # Configure RDP for best performance
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "ColorDepth" -Value 4 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fDisableCam" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "MaxInstanceCount" -Value 999999 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxCompressionLevel" -Value 2 -Force
+
+          # Remove existing firewall rule
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
+          
+          # Allow incoming RDP connections
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+
+          # Restart Remote Desktop service
+          Restart-Service -Name TermService -Force
+          
+          Write-Host "✅ RDP configured!" -ForegroundColor Green
+
+      - name: Create RDP User with Simple Password
+        run: |
+          Write-Host "👤 Creating RDP user..." -ForegroundColor Cyan
+          
+          # Simple plain password
+          $username = "rdpuser"
+          $password = "RDP@2024#Secure"
+          
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          
+          # Create user
+          New-LocalUser -Name $username -Password $securePass -AccountNeverExpires -ErrorAction SilentlyContinue
+          
+          # Add to groups
+          Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+          
+          # Verify user creation
+          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+              Write-Error "User creation failed"
+              exit 1
+          }
+          
+          Write-Host "✅ User '$username' created successfully!" -ForegroundColor Green
+          
+      - name: Configure Auto-Login
+        run: |
+          Write-Host "🔐 Configuring auto-login..." -ForegroundColor Cyan
+          
+          $username = "rdpuser"
+          $password = "RDP@2024#Secure"
+          
+          # Enable auto-login
+          $RegPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+          Set-ItemProperty -Path $RegPath -Name "AutoAdminLogon" -Value "1" -Force
+          Set-ItemProperty -Path $RegPath -Name "DefaultUserName" -Value $username -Force
+          Set-ItemProperty -Path $RegPath -Name "DefaultPassword" -Value $password -Force
+          Set-ItemProperty -Path $RegPath -Name "AutoLogonCount" -Value "999999" -Force
+          
+          # Disable lock screen
+          New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -Value 1 -Force
+          
+          # Skip password on wake
+          powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_NONE CONSOLELOCK 0
+          powercfg /SETDCVALUEINDEX SCHEME_CURRENT SUB_NONE CONSOLELOCK 0
+          
+          Write-Host "✅ Auto-login configured!" -ForegroundColor Green
+
+      - name: Install Tailscale
+        run: |
+          Write-Host "📥 Installing Tailscale..." -ForegroundColor Cyan
+          
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+          
+          Write-Host "✅ Tailscale installed!" -ForegroundColor Green
+
+      - name: Establish Tailscale Connection
+        run: |
+          Write-Host "🌐 Connecting to Tailscale..." -ForegroundColor Cyan
+          
+          # Connect to Tailscale
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          
+          # Wait for Tailscale IP
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 15) {
+              Start-Sleep -Seconds 5
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              $retries++
+          }
+          
+          if (-not $tsIP) {
+              Write-Error "❌ Tailscale IP not assigned"
+              exit 1
+          }
+          
+          Write-Host "✅ Tailscale connected! IP: $tsIP" -ForegroundColor Green
+          
+          # Save IP to file for later use
+          $tsIP | Out-File -FilePath "$env:TEMP\tailscale_ip.txt" -Force
       
-    - name: System Information
-      run: |
-        Write-Host "=== SYSTEM SPECIFICATIONS ===" -ForegroundColor Green
-        Get-ComputerInfo | Select-Object CsProcessors, CsTotalPhysicalMemory, OsArchitecture
-        $disk = Get-PSDrive C
-        Write-Host "Storage: $([math]::Round(($disk.Used + $disk.Free)/1GB, 2)) GB" -ForegroundColor Cyan
-        Write-Host "CPU Cores: $env:NUMBER_OF_PROCESSORS" -ForegroundColor Cyan
-        
-        # GPU Info
-        $gpu = Get-CimInstance Win32_VideoController
-        Write-Host "GPU: $($gpu.Name)" -ForegroundColor Cyan
-        Write-Host "============================================" -ForegroundColor Green
-        
-    - name: Optimize Windows for Maximum Performance
-      run: |
-        # Set power plan to High Performance
-        powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
-        
-        # Disable hibernation to free up disk space
-        powercfg /hibernate off
-        
-        # Disable Windows Defender real-time protection
-        Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-        
-        # Optimize virtual memory using registry (PowerShell 7 compatible)
-        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "PagingFiles" -Value "C:\pagefile.sys 8192 16384" -Force -ErrorAction SilentlyContinue
-        
-        # Disable unnecessary services
-        $services = @("DiagTrack", "dmwappushservice", "WSearch", "SysMain")
-        foreach ($service in $services) {
-          Stop-Service -Name $service -Force -ErrorAction SilentlyContinue
-        }
-        
-        Write-Host "✅ Performance optimizations applied!" -ForegroundColor Green
-        
-    - name: Network Optimization
-      run: |
-        Write-Host "🌐 Optimizing Network Settings..." -ForegroundColor Cyan
-        
-        # Disable network throttling
-        New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile" -Name "NetworkThrottlingIndex" -Value 0xffffffff -Force
-        
-        # Enable TCP optimizations
-        netsh int tcp set global autotuninglevel=normal
-        netsh int tcp set global chimney=enabled
-        netsh int tcp set global dca=enabled
-        netsh int tcp set global netdma=enabled
-        netsh int tcp set global congestionprovider=ctcp
-        netsh int tcp set global ecncapability=enabled
-        
-        # Optimize TCP settings for better performance
-        netsh int tcp set global rss=enabled
-        netsh int tcp set global fastopen=enabled
-        netsh int tcp set global timestamps=disabled
-        
-        # Set DNS to fast servers (Cloudflare & Google)
-        $adapters = Get-NetAdapter | Where-Object {$_.Status -eq "Up"}
-        foreach ($adapter in $adapters) {
-          Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses ("1.1.1.1","8.8.8.8") -ErrorAction SilentlyContinue
-        }
-        
-        # Clear DNS cache
-        ipconfig /flushdns
-        
-        Write-Host "✅ Network optimized for maximum speed!" -ForegroundColor Green
-        
-    - name: Enable GPU Acceleration
-      run: |
-        Write-Host "🎮 Enabling GPU Acceleration..." -ForegroundColor Cyan
-        
-        # Get GPU information
-        $gpu = Get-CimInstance Win32_VideoController
-        Write-Host "Detected GPU: $($gpu.Name)" -ForegroundColor Yellow
-        
-        # Enable hardware acceleration in Windows
-        New-Item -Path "HKCU:\Software\Microsoft\Avalon.Graphics" -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Avalon.Graphics" -Name "DisableHWAcceleration" -Value 0 -Force -ErrorAction SilentlyContinue
-        
-        # Enable GPU acceleration for RDP
-        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "fEnableWddmDriver" -Value 1 -Force -ErrorAction SilentlyContinue
-        
-        # Enable hardware graphics acceleration
-        New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers" -Name "HwSchMode" -Value 2 -Force -ErrorAction SilentlyContinue
-        
-        # Disable GPU power saving
-        powercfg /setacvalueindex SCHEME_CURRENT SUB_VIDEO VIDEOIDLE 0
-        powercfg /setactive SCHEME_CURRENT
-        
-        # Enable DirectX acceleration
-        New-Item -Path "HKLM:\SOFTWARE\Microsoft\DirectDraw" -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\DirectDraw" -Name "EmulationOnly" -Value 0 -Force -ErrorAction SilentlyContinue
-        New-Item -Path "HKLM:\SOFTWARE\Microsoft\Direct3D" -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Direct3D" -Name "DisableDXMaximizedWindowedMode" -Value 0 -Force -ErrorAction SilentlyContinue
-        
-        Write-Host "✅ GPU acceleration enabled!" -ForegroundColor Green
-        
-    - name: Clear Temp Files and Free Up Storage
-      run: |
-        Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
-        
-        Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path "C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
-        Start-Service -Name wuauserv -ErrorAction SilentlyContinue
-        
-        Write-Host "✅ Storage cleaned!" -ForegroundColor Green
-        
-    - name: Download and Install Playit
-      run: |
-        Write-Host "📥 Downloading Playit..." -ForegroundColor Cyan
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.26/playit-windows-x86_64-signed.exe" -OutFile "$env:USERPROFILE\playit.exe"
-        Write-Host "✅ Playit downloaded successfully!" -ForegroundColor Green
-        Start-Sleep -Seconds 3
-        
-    - name: Configure Auto-Login with Admin User
-      run: |
-        Write-Host "🔐 Configuring auto-login..." -ForegroundColor Cyan
-        
-        # Set runneradmin password
-        $password = "P@ssw0rd!2024#Secure"
-        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText $password -Force)
-        
-        # Enable auto-login for runneradmin
-        $RegPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
-        Set-ItemProperty -Path $RegPath -Name "AutoAdminLogon" -Value "1" -Force
-        Set-ItemProperty -Path $RegPath -Name "DefaultUserName" -Value "runneradmin" -Force
-        Set-ItemProperty -Path $RegPath -Name "DefaultPassword" -Value $password -Force
-        Set-ItemProperty -Path $RegPath -Name "AutoLogonCount" -Value "999999" -Force
-        
-        # Disable lock screen
-        New-Item -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Force -ErrorAction SilentlyContinue
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization" -Name "NoLockScreen" -Value 1 -Force
-        
-        # Skip password on wake
-        powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_NONE CONSOLELOCK 0
-        powercfg /SETDCVALUEINDEX SCHEME_CURRENT SUB_NONE CONSOLELOCK 0
-        
-        Write-Host "✅ Auto-login configured for runneradmin!" -ForegroundColor Green
-        
-    - name: Configure RDP for Maximum Performance
-      run: |
-        # Enable Remote Desktop
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0 -Force
-        
-        # Enable firewall rules
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        
-        # Disable Network Level Authentication
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 0 -Force
-        
-        # Configure RDP for best performance
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "ColorDepth" -Value 4 -Force
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "fDisableCam" -Value 0 -Force
-        
-        # Allow unlimited connections
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "MaxInstanceCount" -Value 999999 -Force
-        
-        # Enable GPU acceleration for RDP sessions
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "fEnableWddmDriver" -Value 1 -Force -ErrorAction SilentlyContinue
-        
-        # Optimize RDP bandwidth
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "MaxCompressionLevel" -Value 2 -Force
-        
-        Write-Host "✅ RDP configured for maximum performance!" -ForegroundColor Green
-        
-    - name: Display Connection Information
-      run: |
-        Write-Host "" 
-        Write-Host "============================================" -ForegroundColor Yellow
-        Write-Host "  🖥️  RDP SERVER READY!" -ForegroundColor Yellow
-        Write-Host "============================================" -ForegroundColor Yellow
-        Write-Host "Username: runneradmin" -ForegroundColor Cyan
-        Write-Host "Password: P@ssw0rd!2024#Secure" -ForegroundColor Cyan
-        Write-Host "Auto-Login: ✅ Enabled" -ForegroundColor Green
-        Write-Host "Network: ✅ Optimized" -ForegroundColor Green
-        Write-Host "GPU Acceleration: ✅ Enabled" -ForegroundColor Green
-        Write-Host "============================================" -ForegroundColor Yellow
-        Write-Host ""
-        
-    - name: Start Playit Tunnel
-      env:
-        PLAYIT_AUTH_KEY: ${{ secrets.PL }} 
-      run: |
-        Write-Host "🚀 Starting Playit tunnel..." -ForegroundColor Cyan
-        Start-Process -FilePath "$env:USERPROFILE\playit.exe" -ArgumentList "--secret $env:PLAYIT_AUTH_KEY" -NoNewWindow
-        Start-Sleep -Seconds 10
-        Write-Host "✅ Playit tunnel is running!" -ForegroundColor Green
-        
-    - name: Enable All CPU Cores
-      run: |
-        $cores = (Get-CimInstance -Class Win32_Processor).NumberOfLogicalProcessors
-        Write-Host "⚡ Available CPU Cores: $cores" -ForegroundColor Green
-        
-        # Set processor scheduling for best performance
-        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" -Name "Win32PrioritySeparation" -Value 38 -Force
-        
-    - name: Memory Status Monitor
-      run: |
-        $ram = Get-CimInstance Win32_OperatingSystem
-        $totalRAM = [math]::Round($ram.TotalVisibleMemorySize/1MB, 2)
-        $freeRAM = [math]::Round($ram.FreePhysicalMemory/1MB, 2)
-        $usedRAM = $totalRAM - $freeRAM
-        
-        Write-Host "============================================" -ForegroundColor Yellow
-        Write-Host "  💾 MEMORY STATUS" -ForegroundColor Yellow
-        Write-Host "============================================" -ForegroundColor Yellow
-        Write-Host "Total RAM: $totalRAM GB" -ForegroundColor Cyan
-        Write-Host "Used RAM: $usedRAM GB" -ForegroundColor Cyan
-        Write-Host "Free RAM: $freeRAM GB" -ForegroundColor Cyan
-        Write-Host "============================================" -ForegroundColor Yellow
-        
-    - name: Keep Alive with Performance Monitoring
-      run: |
-        Write-Host "🔥 Session will remain active for 6 hours..." -ForegroundColor Green
-        Write-Host "📊 Monitoring system performance..." -ForegroundColor Cyan
-        Write-Host ""
-        
-        $endTime = (Get-Date).AddHours(6)
-        
-        while ((Get-Date) -lt $endTime) {
-          $remaining = ($endTime - (Get-Date)).ToString("hh\:mm\:ss")
+      - name: Verify RDP Accessibility
+        run: |
+          # Read Tailscale IP
+          $tsIP = Get-Content "$env:TEMP\tailscale_ip.txt" -Raw
+          $tsIP = $tsIP.Trim()
           
-          # Get current stats
-          $cpu = (Get-CimInstance Win32_Processor).LoadPercentage
+          Write-Host "🔍 Testing RDP connectivity to $tsIP..." -ForegroundColor Cyan
+          
+          # Test connectivity
+          $testResult = Test-NetConnection -ComputerName $tsIP -Port 3389 -WarningAction SilentlyContinue
+          if (-not $testResult.TcpTestSucceeded) {
+              Write-Error "❌ TCP connection to RDP port 3389 failed"
+              exit 1
+          }
+          
+          Write-Host "✅ RDP is accessible!" -ForegroundColor Green
+          
+      - name: Enable All CPU Cores
+        run: |
+          $cores = (Get-CimInstance -Class Win32_Processor).NumberOfLogicalProcessors
+          Write-Host "⚡ Available CPU Cores: $cores" -ForegroundColor Green
+          
+          # Set processor scheduling for best performance
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl" -Name "Win32PrioritySeparation" -Value 38 -Force
+          
+      - name: Memory Status Monitor
+        run: |
           $ram = Get-CimInstance Win32_OperatingSystem
-          $ramUsage = [math]::Round((($ram.TotalVisibleMemorySize - $ram.FreePhysicalMemory) / $ram.TotalVisibleMemorySize) * 100, 2)
+          $totalRAM = [math]::Round($ram.TotalVisibleMemorySize/1MB, 2)
+          $freeRAM = [math]::Round($ram.FreePhysicalMemory/1MB, 2)
+          $usedRAM = $totalRAM - $freeRAM
           
-          Write-Host "[$(Get-Date -Format 'HH:mm:ss')] ⏰ Remaining: $remaining | 🔥 CPU: $cpu% | 💾 RAM: $ramUsage%" -ForegroundColor Cyan
+          Write-Host "============================================" -ForegroundColor Yellow
+          Write-Host "  💾 MEMORY STATUS" -ForegroundColor Yellow
+          Write-Host "============================================" -ForegroundColor Yellow
+          Write-Host "Total RAM: $totalRAM GB" -ForegroundColor Cyan
+          Write-Host "Used RAM: $usedRAM GB" -ForegroundColor Cyan
+          Write-Host "Free RAM: $freeRAM GB" -ForegroundColor Cyan
+          Write-Host "============================================" -ForegroundColor Yellow
+
+      - name: Maintain Connection
+        run: |
+          # Read Tailscale IP
+          $tsIP = Get-Content "$env:TEMP\tailscale_ip.txt" -Raw
+          $tsIP = $tsIP.Trim()
           
-          # Keep system active
-          $wsh = New-Object -ComObject WScript.Shell
-          $wsh.SendKeys('+{F15}')
+          Write-Host ""
+          Write-Host "============================================" -ForegroundColor Yellow
+          Write-Host "  🖥️  RDP SERVER READY!" -ForegroundColor Yellow
+          Write-Host "============================================" -ForegroundColor Yellow
+          Write-Host "Tailscale IP: $tsIP" -ForegroundColor Cyan
+          Write-Host "Username: rdpuser" -ForegroundColor Cyan
+          Write-Host "Password: RDP@2024#Secure" -ForegroundColor Cyan
+          Write-Host "" -ForegroundColor Yellow
+          Write-Host "Auto-Login: ✅ Enabled" -ForegroundColor Green
+          Write-Host "Network: ✅ Optimized" -ForegroundColor Green
+          Write-Host "GPU Acceleration: ✅ Enabled" -ForegroundColor Green
+          Write-Host "Performance: ✅ Maximum" -ForegroundColor Green
+          Write-Host "============================================" -ForegroundColor Yellow
+          Write-Host ""
           
-          Start-Sleep -Seconds 1800  # Update every 30 minutes
-        }
-        
-        Write-Host ""
-        Write-Host "⏹️ Session time limit reached!" -ForegroundColor Yellow
+          # Keep alive with monitoring
+          $endTime = (Get-Date).AddHours(6)
+          
+          while ((Get-Date) -lt $endTime) {
+            $remaining = ($endTime - (Get-Date)).ToString("hh\:mm\:ss")
+            
+            # Get current stats
+            $cpu = (Get-CimInstance Win32_Processor).LoadPercentage
+            $ram = Get-CimInstance Win32_OperatingSystem
+            $ramUsage = [math]::Round((($ram.TotalVisibleMemorySize - $ram.FreePhysicalMemory) / $ram.TotalVisibleMemorySize) * 100, 2)
+            
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] ⏰ Remaining: $remaining | 🔥 CPU: $cpu% | 💾 RAM: $ramUsage%" -ForegroundColor Cyan
+            
+            # Keep system active
+            $wsh = New-Object -ComObject WScript.Shell
+            $wsh.SendKeys('+{F15}')
+            
+            Start-Sleep -Seconds 1800  # Update every 30 minutes
+          }
+          
+          Write-Host ""
+          Write-Host "⏹️ Session time limit reached!" -ForegroundColor Yellow
