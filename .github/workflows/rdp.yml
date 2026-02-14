@@ -62,13 +62,13 @@ jobs:
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
           & $tsPath status
 
-      - name: Enable Ping (ICMP)
+      - name: Enable Ping ICMP
         shell: powershell
         run: |
           netsh advfirewall firewall add rule name="ICMP Allow incoming V4 echo request" protocol=icmpv4:8,any dir=in action=allow
           netsh advfirewall firewall add rule name="ICMP Allow incoming V6 echo request" protocol=icmpv6:8,any dir=in action=allow
           Write-Host ""
-          Write-Host "✓ ICMP (Ping) enabled successfully" -ForegroundColor Green
+          Write-Host "ICMP Ping enabled successfully" -ForegroundColor Green
           Write-Host ""
           Write-Host "Testing local ping:" -ForegroundColor Cyan
           ping -n 2 127.0.0.1
@@ -85,15 +85,15 @@ jobs:
           Write-Host "Password     : P@ssword!q218" -ForegroundColor Cyan
           Write-Host "Max Duration : 6 hours" -ForegroundColor Yellow
           Write-Host "======================================" -ForegroundColor Green
-          Write-Host "✓ Ping enabled" -ForegroundColor Green
-          Write-Host "✓ RDP enabled on port 3389" -ForegroundColor Green
+          Write-Host "Ping enabled" -ForegroundColor Green
+          Write-Host "RDP enabled on port 3389" -ForegroundColor Green
           Write-Host "======================================" -ForegroundColor Green
           Write-Host ""
           Write-Host "To connect:" -ForegroundColor Yellow
           Write-Host "  mstsc /v:$env:TAILSCALE_IP" -ForegroundColor White
           Write-Host ""
           
-      - name: Keep Alive (Maximum Duration)
+      - name: Keep Alive Maximum Duration
         shell: powershell
         run: |
           $startTime = Get-Date
@@ -117,20 +117,20 @@ jobs:
                       $tsStatus = & $tsPath status --json | ConvertFrom-Json
                       
                       if ($tsStatus.BackendState -eq "Running") {
-                          Write-Host "  ✓ Tailscale: Connected" -ForegroundColor Green
+                          Write-Host "  Tailscale: Connected" -ForegroundColor Green
                       }
                       
                       $rdpService = Get-Service -Name TermService
                       if ($rdpService.Status -eq "Running") {
-                          Write-Host "  ✓ RDP Service: Running" -ForegroundColor Green
+                          Write-Host "  RDP Service: Running" -ForegroundColor Green
                       }
                       
                       $pingTest = Test-Connection -ComputerName 127.0.0.1 -Count 1 -Quiet
                       if ($pingTest) {
-                          Write-Host "  ✓ Ping: Working" -ForegroundColor Green
+                          Write-Host "  Ping: Working" -ForegroundColor Green
                       }
                   } catch {
-                      Write-Host "  ⚠ Health check error: $_" -ForegroundColor Yellow
+                      Write-Host "  Health check error" -ForegroundColor Yellow
                   }
               }
               
