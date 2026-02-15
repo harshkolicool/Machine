@@ -61,47 +61,41 @@ jobs:
         run: |
           Write-Host "Optimizing Network Stack..." -ForegroundColor Cyan
           
-          # TCP/IP Stack Optimization
+          # TCP/IP Stack Optimization - Only valid parameters
           Write-Host "Tuning TCP/IP stack..." -ForegroundColor Yellow
-          netsh int tcp set global autotuninglevel=restricted
-          netsh int tcp set global congestionprovider=ctcp
-          netsh int tcp set global ecncapability=enabled
-          netsh int tcp set global timestamps=disabled
-          netsh int tcp set global dca=enabled
-          netsh int tcp set global netdma=enabled
-          netsh int tcp set global chimney=enabled
-          netsh int tcp set global rss=enabled
-          netsh int tcp set global maxsynretransmissions=2
-          netsh int tcp set global synretransmitmin=500
-          netsh int tcp set global fastopen=enabled
+          netsh int tcp set global autotuninglevel=normal -ErrorAction SilentlyContinue
+          netsh int tcp set global ecncapability=enabled -ErrorAction SilentlyContinue
+          netsh int tcp set global timestamps=disabled -ErrorAction SilentlyContinue
+          netsh int tcp set global maxsynretransmissions=2 -ErrorAction SilentlyContinue
+          netsh int tcp set global fastopen=enabled -ErrorAction SilentlyContinue
+          netsh int tcp set global rsc=enabled -ErrorAction SilentlyContinue
+          netsh int tcp set global rss=enabled -ErrorAction SilentlyContinue
+          
+          # TCP Supplemental settings (for congestion provider)
+          netsh int tcp set supplemental template=internet congestionprovider=ctcp -ErrorAction SilentlyContinue
           
           # DNS Optimization
           Write-Host "Configuring DNS..." -ForegroundColor Yellow
-          $adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}
+          $adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Select-Object -First 1
           foreach ($adapter in $adapters) {
-              Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses ("1.1.1.1", "1.0.0.1", "8.8.8.8") -ErrorAction SilentlyContinue
+              Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses ("1.1.1.1", "8.8.8.8") -ErrorAction SilentlyContinue
           }
           
           # DNS Cache Settings
           Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Name "NegativeSOACacheTime" -Value 0 -Force -ErrorAction SilentlyContinue
           Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Name "CacheHashTableSize" -Value 8192 -Force -ErrorAction SilentlyContinue
           
-          # Network Interface Optimization
+          # Network Interface Optimization - Only valid properties
           Write-Host "Optimizing Network Adapters..." -ForegroundColor Yellow
           Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | ForEach-Object {
               Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*IPChecksumOffloadIPv4" -RegistryValue 3 -ErrorAction SilentlyContinue
-              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*LsoV2IPv4" -RegistryValue 1 -ErrorAction SilentlyContinue
-              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*LsoV2IPv6" -RegistryValue 1 -ErrorAction SilentlyContinue
               Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*TCPChecksumOffloadIPv4" -RegistryValue 3 -ErrorAction SilentlyContinue
-              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*TCPChecksumOffloadIPv6" -RegistryValue 3 -ErrorAction SilentlyContinue
               Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*UDPChecksumOffloadIPv4" -RegistryValue 3 -ErrorAction SilentlyContinue
-              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*UDPChecksumOffloadIPv6" -RegistryValue 3 -ErrorAction SilentlyContinue
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*LsoV2IPv4" -RegistryValue 1 -ErrorAction SilentlyContinue
           }
           
-          # Flush DNS and reset network stack
+          # Flush DNS only (skip network reset to avoid restart requirement)
           ipconfig /flushdns
-          netsh winsock reset catalog
-          netsh int ip reset
           
           Write-Host "Network optimization complete" -ForegroundColor Green
 
