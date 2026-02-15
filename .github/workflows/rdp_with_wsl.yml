@@ -13,18 +13,19 @@ jobs:
         run: |
           Write-Host "Enabling Ultimate Performance Mode..." -ForegroundColor Cyan
           
-          # Enable Ultimate Performance power plan (create if doesn't exist)
+          # Unlock Ultimate Performance using correct GUID
           Write-Host "Setting up Ultimate Performance power plan..." -ForegroundColor Yellow
-          powercfg /delete 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c -ErrorAction SilentlyContinue
-          powercfg /duplicatescheme e9a42b02-d5df-448d-aa00-03f14749e802
+          powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
           
-          # Get the new scheme GUID
-          $schemes = powercfg /list | Select-String "Power Scheme GUID"
-          $ultimateScheme = $schemes[0] -split " " | Where-Object {$_ -match '^[a-f0-9]{8}'}
+          # Get the Ultimate Performance scheme GUID
+          $ultimateScheme = powercfg /list | Select-String "Ultimate Performance" | Select-Object -First 1
+          $schemeGUID = ($ultimateScheme -split ' ')[3]
+          
+          Write-Host "Found scheme GUID: $schemeGUID" -ForegroundColor Yellow
           
           # Set as active
           Write-Host "Activating Ultimate Performance scheme..." -ForegroundColor Yellow
-          powercfg /setactive $ultimateScheme
+          powercfg /setactive $schemeGUID
           
           # Disable all power saving features
           Write-Host "Disabling power saving features..." -ForegroundColor Yellow
@@ -37,25 +38,26 @@ jobs:
           powercfg /change hibernate-timeout-ac 0
           powercfg /change hibernate-timeout-dc 0
           
-          # Disable USB suspend
-          powercfg /setacvalueindex $ultimateScheme 2a737441-1930-4859-8476-b6dcfc128d24 48e6b7a6-50f5-4637-9d67-d1043d9dacab 0
-          powercfg /setdcvalueindex $ultimateScheme 2a737441-1930-4859-8476-b6dcfc128d24 48e6b7a6-50f5-4637-9d67-d1043d9dacab 0
+          # Disable USB selective suspend
+          powercfg /setacvalueindex $schemeGUID 2a737441-1930-4859-8476-b6dcfc128d24 48e6b7a6-50f5-4637-9d67-d1043d9dacab 0
+          powercfg /setdcvalueindex $schemeGUID 2a737441-1930-4859-8476-b6dcfc128d24 48e6b7a6-50f5-4637-9d67-d1043d9dacab 0
           
           # Disable processor idle states
-          powercfg /setacvalueindex $ultimateScheme 54533251-82be-4824-96c1-47b60b740d00 331c3779-f72e-4da5-ac1d-3a47df7ef53e 0
-          powercfg /setdcvalueindex $ultimateScheme 54533251-82be-4824-96c1-47b60b740d00 331c3779-f72e-4da5-ac1d-3a47df7ef53e 0
+          powercfg /setacvalueindex $schemeGUID 54533251-82be-4824-96c1-47b60b740d00 331c3779-f72e-4da5-ac1d-3a47df7ef53e 0
+          powercfg /setdcvalueindex $schemeGUID 54533251-82be-4824-96c1-47b60b740d00 331c3779-f72e-4da5-ac1d-3a47df7ef53e 0
           
           # Maximum processor frequency
-          powercfg /setacvalueindex $ultimateScheme 54533251-82be-4824-96c1-47b60b740d00 bc5038f7-23e0-4960-96da-33abaf5935ec 100
-          powercfg /setdcvalueindex $ultimateScheme 54533251-82be-4824-96c1-47b60b740d00 bc5038f7-23e0-4960-96da-33abaf5935ec 100
+          powercfg /setacvalueindex $schemeGUID 54533251-82be-4824-96c1-47b60b740d00 bc5038f7-23e0-4960-96da-33abaf5935ec 100
+          powercfg /setdcvalueindex $schemeGUID 54533251-82be-4824-96c1-47b60b740d00 bc5038f7-23e0-4960-96da-33abaf5935ec 100
           
-          powercfg /apply $ultimateScheme
+          powercfg /apply $schemeGUID
           
           # Disable Windows Update
           Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
           Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
           
           Write-Host "Ultimate Performance Mode Enabled" -ForegroundColor Green
+          powercfg /query $schemeGUID | Select-Object -First 3
 
       - name: Advanced Network Optimization
         shell: powershell
@@ -74,14 +76,7 @@ jobs:
           netsh int tcp set global rss=enabled
           netsh int tcp set global maxsynretransmissions=2
           netsh int tcp set global synretransmitmin=500
-          
-          # Enable TCP Fast Open
           netsh int tcp set global fastopen=enabled
-          
-          # Increase TCP buffer sizes
-          netsh int tcp set global builtinlevel=custom
-          netsh int tcp set global maxdupacks=3
-          netsh int tcp set global recvwindowsize=65536
           
           # DNS Optimization
           Write-Host "Configuring DNS..." -ForegroundColor Yellow
@@ -275,22 +270,6 @@ jobs:
           
           Write-Host "RDP configured for peak performance" -ForegroundColor Green
 
-      - name: Create RDP User
-        shell: powershell
-        run: |
-          $username = "rdpadmin"
-          $password = "P@ssword!q218"
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
-          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name $username -Password $securePass -PasswordNeverExpires -AccountNeverExpires -UserMayNotChangePassword
-          }
-          
-          Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
-          
-          Write-Host "RDP user created" -ForegroundColor Green
-
       - name: Install Tailscale
         shell: powershell
         run: |
@@ -449,5 +428,4 @@ jobs:
           Write-Host ""
           Write-Host "==========================================" -ForegroundColor Yellow
           Write-Host "Maximum session duration reached (6 hours)" -ForegroundColor Yellow
-          Write-Host "Total runtime: $([math]::Round(($now - $startTime).TotalMinutes, 1)) minutes" -ForegroundColor Yellow
           Write-Host "==========================================" -ForegroundColor Yellow
