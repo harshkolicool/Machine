@@ -16,6 +16,7 @@ jobs:
           # Unlock Ultimate Performance using correct GUID
           Write-Host "Setting up Ultimate Performance power plan..." -ForegroundColor Yellow
           powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
+          Start-Sleep -Seconds 2
           
           # Get the Ultimate Performance scheme GUID
           $ultimateScheme = powercfg /list | Select-String "Ultimate Performance" | Select-Object -First 1
@@ -26,38 +27,34 @@ jobs:
           # Set as active
           Write-Host "Activating Ultimate Performance scheme..." -ForegroundColor Yellow
           powercfg /setactive $schemeGUID
+          Start-Sleep -Seconds 1
           
-          # Disable all power saving features
+          # Disable power saving features using simpler approach
           Write-Host "Disabling power saving features..." -ForegroundColor Yellow
-          powercfg /change monitor-timeout-ac 0
-          powercfg /change monitor-timeout-dc 0
-          powercfg /change disk-timeout-ac 0
-          powercfg /change disk-timeout-dc 0
-          powercfg /change standby-timeout-ac 0
-          powercfg /change standby-timeout-dc 0
-          powercfg /change hibernate-timeout-ac 0
-          powercfg /change hibernate-timeout-dc 0
+          powercfg /change monitor-timeout-ac 0 2>$null
+          powercfg /change standby-timeout-ac 0 2>$null
+          powercfg /change disk-timeout-ac 0 2>$null
+          powercfg /change hibernate-timeout-ac 0 2>$null
           
-          # Disable USB selective suspend
-          powercfg /setacvalueindex $schemeGUID 2a737441-1930-4859-8476-b6dcfc128d24 48e6b7a6-50f5-4637-9d67-d1043d9dacab 0
-          powercfg /setdcvalueindex $schemeGUID 2a737441-1930-4859-8476-b6dcfc128d24 48e6b7a6-50f5-4637-9d67-d1043d9dacab 0
+          # Registry-based approach for additional settings
+          Write-Host "Applying registry power settings..." -ForegroundColor Yellow
           
-          # Disable processor idle states
-          powercfg /setacvalueindex $schemeGUID 54533251-82be-4824-96c1-47b60b740d00 331c3779-f72e-4da5-ac1d-3a47df7ef53e 0
-          powercfg /setdcvalueindex $schemeGUID 54533251-82be-4824-96c1-47b60b740d00 331c3779-f72e-4da5-ac1d-3a47df7ef53e 0
+          # Disable screen saver
+          Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "ScreenSaveActive" -Value 0 -Force -ErrorAction SilentlyContinue
           
-          # Maximum processor frequency
-          powercfg /setacvalueindex $schemeGUID 54533251-82be-4824-96c1-47b60b740d00 bc5038f7-23e0-4960-96da-33abaf5935ec 100
-          powercfg /setdcvalueindex $schemeGUID 54533251-82be-4824-96c1-47b60b740d00 bc5038f7-23e0-4960-96da-33abaf5935ec 100
+          # Disable sleep/hibernation via registry
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "HibernateFileSizePercent" -Value 0 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "HibernateEnabled" -Value 0 -Force -ErrorAction SilentlyContinue
           
-          powercfg /apply $schemeGUID
+          # Disable USB suspend
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\USBHUB\Parameters" -Name "DisableSelectiveSuspend" -Value 1 -Force -ErrorAction SilentlyContinue
           
           # Disable Windows Update
           Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
           Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
           
           Write-Host "Ultimate Performance Mode Enabled" -ForegroundColor Green
-          powercfg /query $schemeGUID | Select-Object -First 3
+          powercfg /query | Select-Object -First 5
 
       - name: Advanced Network Optimization
         shell: powershell
