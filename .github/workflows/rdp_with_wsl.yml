@@ -8,62 +8,272 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 360
     steps:
-      - name: System Optimization
+      - name: System Optimization - Ultimate Performance Mode
         shell: powershell
         run: |
-          Write-Host "Optimizing system..." -ForegroundColor Cyan
-          powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+          Write-Host "Enabling Ultimate Performance Mode..." -ForegroundColor Cyan
+          
+          # Enable Ultimate Performance power plan (create if doesn't exist)
+          Write-Host "Setting up Ultimate Performance power plan..." -ForegroundColor Yellow
+          powercfg /delete 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c -ErrorAction SilentlyContinue
+          powercfg /duplicatescheme e9a42b02-d5df-448d-aa00-03f14749e802
+          
+          # Get the new scheme GUID
+          $schemes = powercfg /list | Select-String "Power Scheme GUID"
+          $ultimateScheme = $schemes[0] -split " " | Where-Object {$_ -match '^[a-f0-9]{8}'}
+          
+          # Set as active
+          Write-Host "Activating Ultimate Performance scheme..." -ForegroundColor Yellow
+          powercfg /setactive $ultimateScheme
+          
+          # Disable all power saving features
+          Write-Host "Disabling power saving features..." -ForegroundColor Yellow
           powercfg /change monitor-timeout-ac 0
+          powercfg /change monitor-timeout-dc 0
+          powercfg /change disk-timeout-ac 0
+          powercfg /change disk-timeout-dc 0
           powercfg /change standby-timeout-ac 0
+          powercfg /change standby-timeout-dc 0
+          powercfg /change hibernate-timeout-ac 0
+          powercfg /change hibernate-timeout-dc 0
+          
+          # Disable USB suspend
+          powercfg /setacvalueindex $ultimateScheme 2a737441-1930-4859-8476-b6dcfc128d24 48e6b7a6-50f5-4637-9d67-d1043d9dacab 0
+          powercfg /setdcvalueindex $ultimateScheme 2a737441-1930-4859-8476-b6dcfc128d24 48e6b7a6-50f5-4637-9d67-d1043d9dacab 0
+          
+          # Disable processor idle states
+          powercfg /setacvalueindex $ultimateScheme 54533251-82be-4824-96c1-47b60b740d00 331c3779-f72e-4da5-ac1d-3a47df7ef53e 0
+          powercfg /setdcvalueindex $ultimateScheme 54533251-82be-4824-96c1-47b60b740d00 331c3779-f72e-4da5-ac1d-3a47df7ef53e 0
+          
+          # Maximum processor frequency
+          powercfg /setacvalueindex $ultimateScheme 54533251-82be-4824-96c1-47b60b740d00 bc5038f7-23e0-4960-96da-33abaf5935ec 100
+          powercfg /setdcvalueindex $ultimateScheme 54533251-82be-4824-96c1-47b60b740d00 bc5038f7-23e0-4960-96da-33abaf5935ec 100
+          
+          powercfg /apply $ultimateScheme
+          
+          # Disable Windows Update
           Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
           Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
-          Write-Host "System optimization complete" -ForegroundColor Green
+          
+          Write-Host "Ultimate Performance Mode Enabled" -ForegroundColor Green
+
+      - name: Advanced Network Optimization
+        shell: powershell
+        run: |
+          Write-Host "Optimizing Network Stack..." -ForegroundColor Cyan
+          
+          # TCP/IP Stack Optimization
+          Write-Host "Tuning TCP/IP stack..." -ForegroundColor Yellow
+          netsh int tcp set global autotuninglevel=restricted
+          netsh int tcp set global congestionprovider=ctcp
+          netsh int tcp set global ecncapability=enabled
+          netsh int tcp set global timestamps=disabled
+          netsh int tcp set global dca=enabled
+          netsh int tcp set global netdma=enabled
+          netsh int tcp set global chimney=enabled
+          netsh int tcp set global rss=enabled
+          netsh int tcp set global maxsynretransmissions=2
+          netsh int tcp set global synretransmitmin=500
+          
+          # Enable TCP Fast Open
+          netsh int tcp set global fastopen=enabled
+          
+          # Increase TCP buffer sizes
+          netsh int tcp set global builtinlevel=custom
+          netsh int tcp set global maxdupacks=3
+          netsh int tcp set global recvwindowsize=65536
+          
+          # DNS Optimization
+          Write-Host "Configuring DNS..." -ForegroundColor Yellow
+          $adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}
+          foreach ($adapter in $adapters) {
+              Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses ("1.1.1.1", "1.0.0.1", "8.8.8.8") -ErrorAction SilentlyContinue
+          }
+          
+          # DNS Cache Settings
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Name "NegativeSOACacheTime" -Value 0 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Name "CacheHashTableSize" -Value 8192 -Force -ErrorAction SilentlyContinue
+          
+          # Network Interface Optimization
+          Write-Host "Optimizing Network Adapters..." -ForegroundColor Yellow
+          Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | ForEach-Object {
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*IPChecksumOffloadIPv4" -RegistryValue 3 -ErrorAction SilentlyContinue
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*LsoV2IPv4" -RegistryValue 1 -ErrorAction SilentlyContinue
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*LsoV2IPv6" -RegistryValue 1 -ErrorAction SilentlyContinue
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*TCPChecksumOffloadIPv4" -RegistryValue 3 -ErrorAction SilentlyContinue
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*TCPChecksumOffloadIPv6" -RegistryValue 3 -ErrorAction SilentlyContinue
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*UDPChecksumOffloadIPv4" -RegistryValue 3 -ErrorAction SilentlyContinue
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*UDPChecksumOffloadIPv6" -RegistryValue 3 -ErrorAction SilentlyContinue
+          }
+          
+          # Flush DNS and reset network stack
+          ipconfig /flushdns
+          netsh winsock reset catalog
+          netsh int ip reset
+          
+          Write-Host "Network optimization complete" -ForegroundColor Green
+
+      - name: Disable Unnecessary Services for Performance
+        shell: powershell
+        run: |
+          Write-Host "Disabling unnecessary services..." -ForegroundColor Cyan
+          
+          $servicesToDisable = @(
+              'DiagTrack',
+              'dmwappushservice',
+              'SysMain',
+              'WSearch',
+              'DoSvc',
+              'TrkWks',
+              'WbioSrvc',
+              'SCardSvr',
+              'ScDeviceEnum',
+              'Spooler',
+              'WerSvc',
+              'VSS',
+              'VSSVC',
+              'WinRM',
+              'RemoteRegistry'
+          )
+          
+          foreach ($service in $servicesToDisable) {
+              try {
+                  Stop-Service -Name $service -Force -ErrorAction SilentlyContinue | Out-Null
+                  Set-Service -Name $service -StartupType Disabled -ErrorAction SilentlyContinue | Out-Null
+              } catch {
+                  # Ignore errors
+              }
+          }
+          
+          Write-Host "Service optimization complete" -ForegroundColor Green
+
+      - name: System Registry Optimization
+        shell: powershell
+        run: |
+          Write-Host "Applying registry optimizations..." -ForegroundColor Cyan
+          
+          # Disable Visual Effects
+          Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name "VisualFXSetting" -Value 2 -Force -ErrorAction SilentlyContinue
+          
+          # Optimize background processes
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "ClearPageFileAtShutdown" -Value 0 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "LargeSystemCache" -Value 1 -Force -ErrorAction SilentlyContinue
+          
+          # Disable animations
+          Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "MenuShowDelay" -Value 0 -Force -ErrorAction SilentlyContinue
+          
+          # Optimize disk I/O
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NtfsDisable8dot3NameCreation" -Value 1 -Force -ErrorAction SilentlyContinue
+          
+          # RDP Optimization Registry Settings
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "SelectTransport" -Value 6 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "fUseCommonW32Heap" -Value 1 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "BITMAPCACHESIZE" -Value 32000 -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "Registry optimization complete" -ForegroundColor Green
+
+      - name: Enable UDP on RDP for Better Performance
+        shell: powershell
+        run: |
+          Write-Host "Enabling UDP on RDP..." -ForegroundColor Cyan
+          
+          # Enable UDP in RDP
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "fUseUdpOnRdp" -Value 1 -Force
+          
+          # UDP Port (3390)
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\TermService\Parameters" -Name "UdpPortNumber" -Value 3390 -Force -ErrorAction SilentlyContinue
+          
+          # Enable Firewall rules for UDP RDP
+          netsh advfirewall firewall add rule name="RDP over UDP" dir=in action=allow protocol=UDP localport=3390 enable=yes
+          
+          Write-Host "UDP RDP enabled" -ForegroundColor Green
+
+      - name: Optimize Memory Management
+        shell: powershell
+        run: |
+          Write-Host "Optimizing memory management..." -ForegroundColor Cyan
+          
+          # Disable paging
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "PagingFiles" -Value "" -Force -ErrorAction SilentlyContinue
+          
+          # Increase NonPagedPoolSize
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "NonPagedPoolSize" -Value 0 -Force -ErrorAction SilentlyContinue
+          
+          # Disable memory dump
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl" -Name "CrashDumpEnabled" -Value 0 -Force -ErrorAction SilentlyContinue
+          
+          # Optimize prefetch
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters" -Name "EnablePrefetcher" -Value 3 -Force -ErrorAction SilentlyContinue
+          
+          Write-Host "Memory optimization complete" -ForegroundColor Green
 
       - name: Install and Configure WSL with Ubuntu
         shell: powershell
         run: |
           Write-Host "Setting up WSL and Ubuntu..." -ForegroundColor Cyan
+          
+          # Update WSL
+          Write-Host "Updating WSL..." -ForegroundColor Yellow
           wsl --update
           Start-Sleep -Seconds 5
+          
+          # Set WSL default version to 2
+          Write-Host "Setting WSL default version to 2..." -ForegroundColor Yellow
           wsl --set-default-version 2
           Start-Sleep -Seconds 3
-          wsl --install -d Ubuntu --no-launch
-          Start-Sleep -Seconds 10
           
-          $username = "harsh"
-          $password = "kali"
+          # Install Ubuntu
+          Write-Host "Installing Ubuntu..." -ForegroundColor Yellow
+          wsl --install -d Ubuntu
+          Start-Sleep -Seconds 15
           
-          Write-Host "Configuring Ubuntu user..." -ForegroundColor Yellow
+          # Update and install packages
+          Write-Host "Updating Ubuntu and installing packages..." -ForegroundColor Yellow
+          wsl -d Ubuntu bash -c "sudo apt-get update -y && sudo apt-get dist-upgrade -y && sudo apt-get install build-essential gdb python-is-python3 -y && sudo apt install python3-pip -y"
           
-          $scriptContent = "useradd -m -s /bin/bash $username`necho '$username`:$password' | chpasswd`nusermod -aG sudo $username`necho '$username ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers"
+          Write-Host "WSL Setup Complete" -ForegroundColor Green
           
-          $setupScriptPath = "$env:TEMP\wsl_setup.sh"
-          [System.IO.File]::WriteAllText($setupScriptPath, $scriptContent, [System.Text.Encoding]::UTF8)
-          
-          wsl -d Ubuntu -u root bash -c "bash /mnt/c/Users/runneradmin/AppData/Local/Temp/wsl_setup.sh"
-          Start-Sleep -Seconds 3
-          
-          Write-Host "Updating Ubuntu..." -ForegroundColor Yellow
-          wsl -d Ubuntu -u $username bash -c "sudo apt-get update -y && sudo apt-get install -y build-essential gdb python-is-python3 python3-pip"
-          
-          Remove-Item $setupScriptPath -Force -ErrorAction SilentlyContinue
-          
-          Write-Host "WSL Setup Complete - Username: $username" -ForegroundColor Green
+          # Show WSL status
+          Write-Host ""
+          Write-Host "WSL Status:" -ForegroundColor Cyan
           wsl --list --verbose
 
-      - name: Configure RDP for Performance
+      - name: Configure RDP for Peak Performance
         shell: powershell
         run: |
-          Write-Host "Configuring RDP..." -ForegroundColor Cyan
+          Write-Host "Configuring RDP for peak performance..." -ForegroundColor Cyan
+          
+          # Enable RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          
+          # Connection limits
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxInstanceCount" -Value 999999 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxConnectionTime" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxDisconnectionTime" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxIdleTime" -Value 0 -Force
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fInheritMaxSessionTime" -Value 0 -Force
+          
+          # Performance settings
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "ColorDepth" -Value 4 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "PerformanceFlags" -Value 1 -Force
+          
+          # Enable compression
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fInheritCompressionType" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "CompressionType" -Value 1 -Force
+          
+          # Bandwidth optimization
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fUseCommonW32Heap" -Value 1 -Force
+          
+          # Enable Firewall rules
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+          netsh advfirewall firewall add rule name="RDP TCP" dir=in action=allow protocol=TCP localport=3389 enable=yes
+          netsh advfirewall firewall add rule name="RDP UDP" dir=in action=allow protocol=UDP localport=3389 enable=yes
+          
+          # Restart RDP service
           Restart-Service -Name TermService -Force
-          Write-Host "RDP configured" -ForegroundColor Green
+          
+          Write-Host "RDP configured for peak performance" -ForegroundColor Green
 
       - name: Create RDP User
         shell: powershell
@@ -163,17 +373,81 @@ jobs:
           Write-Host "  Password: kali" -ForegroundColor White
           Write-Host "==========================================" -ForegroundColor Green
 
-      - name: Keep Alive
+      - name: Keep Alive with Advanced Monitoring
         shell: powershell
         run: |
           $startTime = Get-Date
           $endTime = $startTime.AddMinutes(358)
           
-          Write-Host "Session active - maintaining connection..." -ForegroundColor Green
+          Write-Host "Session active - maintaining connection with health monitoring..." -ForegroundColor Green
+          
+          $healthCheckCount = 0
           
           while ((Get-Date) -lt $endTime) {
               $elapsed = [math]::Round(((Get-Date) - $startTime).TotalMinutes, 1)
               $remaining = [math]::Round(($endTime - (Get-Date)).TotalMinutes, 1)
               Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Elapsed: $elapsed min | Remaining: $remaining min" -ForegroundColor Green
+              
+              # Health check every 5 minutes
+              if ($healthCheckCount % 2.5 -eq 0) {
+                  Write-Host ""
+                  Write-Host "--- Health Check ---" -ForegroundColor Yellow
+                  
+                  try {
+                      # Check RDP Service
+                      $rdpService = Get-Service -Name TermService -ErrorAction SilentlyContinue
+                      if ($rdpService.Status -ne 'Running') {
+                          Write-Host "RDP Service down - restarting..." -ForegroundColor Red
+                          Restart-Service -Name TermService -Force
+                      } else {
+                          Write-Host "  ✓ RDP Service: Running" -ForegroundColor Green
+                      }
+                      
+                      # Check Tailscale
+                      $tsPath = "$env:ProgramFiles\Tailscale\tailscale.exe"
+                      if (Test-Path $tsPath) {
+                          $tsStatus = & $tsPath status --json 2>$null | ConvertFrom-Json
+                          if ($tsStatus.BackendState -eq "Running") {
+                              Write-Host "  ✓ Tailscale: Connected" -ForegroundColor Green
+                          } else {
+                              Write-Host "Tailscale down - reconnecting..." -ForegroundColor Yellow
+                              & $tsPath up
+                          }
+                      }
+                      
+                      # Check Network
+                      $pingTest = Test-Connection -ComputerName 8.8.8.8 -Count 1 -Quiet -ErrorAction SilentlyContinue
+                      if ($pingTest) {
+                          Write-Host "  ✓ Network: Connected" -ForegroundColor Green
+                      } else {
+                          Write-Host "  ✗ Network: Issue detected" -ForegroundColor Yellow
+                      }
+                      
+                      # Check Memory
+                      $os = Get-WmiObject -Class Win32_OperatingSystem
+                      $memUsed = [math]::Round((($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize) * 100, 1)
+                      $memColor = if ($memUsed -lt 75) { 'Green' } else { 'Yellow' }
+                      Write-Host "  Memory: $memUsed%" -ForegroundColor $memColor
+                      
+                      # Check CPU
+                      $cpu = Get-WmiObject -Class Win32_Processor | Measure-Object -Property LoadPercentage -Average
+                      $cpuColor = if ($cpu.Average -lt 75) { 'Green' } else { 'Yellow' }
+                      Write-Host "  CPU: $([math]::Round($cpu.Average, 1))%" -ForegroundColor $cpuColor
+                      
+                  } catch {
+                      Write-Host "  Health check error: $_" -ForegroundColor Red
+                  }
+                  
+                  Write-Host "--- End Health Check ---" -ForegroundColor Yellow
+                  Write-Host ""
+              }
+              
               Start-Sleep -Seconds 120
+              $healthCheckCount += 1
           }
+          
+          Write-Host ""
+          Write-Host "==========================================" -ForegroundColor Yellow
+          Write-Host "Maximum session duration reached (6 hours)" -ForegroundColor Yellow
+          Write-Host "Total runtime: $([math]::Round(($now - $startTime).TotalMinutes, 1)) minutes" -ForegroundColor Yellow
+          Write-Host "==========================================" -ForegroundColor Yellow
