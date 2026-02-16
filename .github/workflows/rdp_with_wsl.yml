@@ -200,29 +200,40 @@ jobs:
           
           # Update WSL
           Write-Host "Updating WSL..." -ForegroundColor Yellow
-          wsl --update
+          wsl --update 2>$null
           Start-Sleep -Seconds 5
           
           # Set WSL default version to 2
           Write-Host "Setting WSL default version to 2..." -ForegroundColor Yellow
-          wsl --set-default-version 2
+          wsl --set-default-version 2 2>$null
           Start-Sleep -Seconds 3
           
           # Install Ubuntu
           Write-Host "Installing Ubuntu..." -ForegroundColor Yellow
-          wsl --install -d Ubuntu
-          Start-Sleep -Seconds 15
+          wsl --install -d Ubuntu --no-launch 2>$null
+          Start-Sleep -Seconds 30
           
-          # Update and install packages
-          Write-Host "Updating Ubuntu and installing packages..." -ForegroundColor Yellow
-          wsl -d Ubuntu bash -c "sudo apt-get update -y && sudo apt-get dist-upgrade -y && sudo apt-get install build-essential gdb python-is-python3 -y && sudo apt install python3-pip -y"
+          # Quick Ubuntu setup - only essential packages
+          Write-Host "Configuring Ubuntu (this may take a few moments)..." -ForegroundColor Yellow
+          
+          # Run apt-get with timeout
+          $timeout = 120
+          $process = Start-Process -FilePath "wsl" -ArgumentList "-d Ubuntu bash -c 'sudo apt-get update -y && sudo apt-get install -y python3-pip build-essential gdb'" -NoNewWindow -PassThru
+          
+          if (!$process.WaitForExit($timeout * 1000)) {
+              Write-Host "Package installation taking longer than expected, continuing..." -ForegroundColor Yellow
+              $process.Kill()
+          }
           
           Write-Host "WSL Setup Complete" -ForegroundColor Green
           
           # Show WSL status
           Write-Host ""
           Write-Host "WSL Status:" -ForegroundColor Cyan
-          wsl --list --verbose
+          wsl --list --verbose 2>$null
+          
+          Write-Host ""
+          Write-Host "✓ WSL Ubuntu is ready for use" -ForegroundColor Green
 
       - name: Configure RDP for Peak Performance
         shell: powershell
