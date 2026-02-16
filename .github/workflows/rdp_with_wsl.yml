@@ -289,6 +289,50 @@ jobs:
           Write-Host ""
           Write-Host "[OK] WSL Ubuntu is installed and ready" -ForegroundColor Green
 
+      - name: Create RDP User Account
+        shell: powershell
+        run: |
+          Write-Host "Creating RDP user account..." -ForegroundColor Cyan
+          
+          $username = "rdpadmin"
+          $password = "P@ssword!q218"
+          $displayName = "RDP Administrator"
+          
+          # Check if user already exists
+          $userExists = Get-LocalUser -Name $username -ErrorAction SilentlyContinue
+          
+          if ($userExists) {
+              Write-Host "User $username already exists, updating password..." -ForegroundColor Yellow
+              $SecurePassword = ConvertTo-SecureString -String $password -AsPlainText -Force
+              Set-LocalUser -Name $username -Password $SecurePassword -ErrorAction SilentlyContinue
+          } else {
+              Write-Host "Creating new user: $username" -ForegroundColor Yellow
+              $SecurePassword = ConvertTo-SecureString -String $password -AsPlainText -Force
+              New-LocalUser -Name $username -Password $SecurePassword -FullName $displayName -Description "RDP Access User" -ErrorAction SilentlyContinue
+          }
+          
+          # Add user to Remote Desktop Users group
+          Write-Host "Adding user to Remote Desktop Users group..." -ForegroundColor Yellow
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+          
+          # Add user to Administrators group for full access
+          Write-Host "Adding user to Administrators group..." -ForegroundColor Yellow
+          Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+          
+          # Enable user account (ensure it's not disabled)
+          Write-Host "Enabling user account..." -ForegroundColor Yellow
+          Enable-LocalUser -Name $username -ErrorAction SilentlyContinue
+          
+          Write-Host "User account created/updated successfully!" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "Credentials:" -ForegroundColor Cyan
+          Write-Host "  Username: $username" -ForegroundColor White
+          Write-Host "  Password: $password" -ForegroundColor White
+          Write-Host ""
+          Write-Host "User is now a member of:" -ForegroundColor Green
+          Write-Host "  - Remote Desktop Users" -ForegroundColor White
+          Write-Host "  - Administrators" -ForegroundColor White
+
       - name: Configure RDP for Peak Performance
         shell: powershell
         run: |
