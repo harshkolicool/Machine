@@ -233,7 +233,7 @@ jobs:
           wsl --list --verbose 2>$null
           
           Write-Host ""
-          Write-Host "✓ WSL Ubuntu is ready for use" -ForegroundColor Green
+          Write-Host "[OK] WSL Ubuntu is ready for use" -ForegroundColor Green
 
       - name: Configure RDP for Peak Performance
         shell: powershell
@@ -381,7 +381,7 @@ jobs:
                           Write-Host "RDP Service down - restarting..." -ForegroundColor Red
                           Restart-Service -Name TermService -Force
                       } else {
-                          Write-Host "  ✓ RDP Service: Running" -ForegroundColor Green
+                          Write-Host "  [OK] RDP Service: Running" -ForegroundColor Green
                       }
                       
                       # Check Tailscale
@@ -389,7 +389,7 @@ jobs:
                       if (Test-Path $tsPath) {
                           $tsStatus = & $tsPath status --json 2>$null | ConvertFrom-Json
                           if ($tsStatus.BackendState -eq "Running") {
-                              Write-Host "  ✓ Tailscale: Connected" -ForegroundColor Green
+                              Write-Host "  [OK] Tailscale: Connected" -ForegroundColor Green
                           } else {
                               Write-Host "Tailscale down - reconnecting..." -ForegroundColor Yellow
                               & $tsPath up
@@ -399,9 +399,9 @@ jobs:
                       # Check Network
                       $pingTest = Test-Connection -ComputerName 8.8.8.8 -Count 1 -Quiet -ErrorAction SilentlyContinue
                       if ($pingTest) {
-                          Write-Host "  ✓ Network: Connected" -ForegroundColor Green
+                          Write-Host "  [OK] Network: Connected" -ForegroundColor Green
                       } else {
-                          Write-Host "  ✗ Network: Issue detected" -ForegroundColor Yellow
+                          Write-Host "  [WARN] Network: Issue detected" -ForegroundColor Yellow
                       }
                       
                       # Check Memory
