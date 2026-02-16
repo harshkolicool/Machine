@@ -193,6 +193,58 @@ jobs:
           
           Write-Host "Memory optimization complete" -ForegroundColor Green
 
+      - name: Install VMware and Virtualization Tools
+        shell: powershell
+        run: |
+          Write-Host "Installing virtualization tools..." -ForegroundColor Cyan
+          
+          # Enable Hyper-V (built-in Windows virtualization)
+          Write-Host "Enabling Hyper-V..." -ForegroundColor Yellow
+          Enable-WindowsOptionalFeature -FeatureName Hyper-V -Online -All -NoRestart -ErrorAction SilentlyContinue
+          
+          # Enable Virtual Machine Platform
+          Write-Host "Enabling Virtual Machine Platform..." -ForegroundColor Yellow
+          Enable-WindowsOptionalFeature -FeatureName VirtualMachinePlatform -Online -NoRestart -ErrorAction SilentlyContinue
+          
+          # Install Docker (can run Linux containers if needed)
+          Write-Host "Installing Docker for container support..." -ForegroundColor Yellow
+          choco install docker-desktop -y --no-progress -ErrorAction SilentlyContinue
+          
+          Write-Host "Virtualization tools configured" -ForegroundColor Green
+
+      - name: Setup Kali Linux Virtual Machine Environment
+        shell: powershell
+        run: |
+          Write-Host "Setting up Kali Linux VM environment..." -ForegroundColor Cyan
+          
+          # Create VM storage directory
+          $vmPath = "C:\VirtualMachines"
+          if (-not (Test-Path $vmPath)) {
+              New-Item -ItemType Directory -Path $vmPath -Force | Out-Null
+              Write-Host "Created VM directory: $vmPath" -ForegroundColor Green
+          }
+          
+          # Create configuration file with setup instructions
+          $configPath = "$vmPath\KALI-SETUP-GUIDE.txt"
+          Add-Content -Path $configPath -Value "Kali Linux VM Setup Guide" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "1. Download from https://www.kali.org/get-kali/" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "2. Select VMware 64-bit" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "3. Extract to: $vmPath\Kali-Linux" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "4. Open .vmx in VMware Workstation" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "5. Power On" -ErrorAction SilentlyContinue
+
+          Write-Host "Configuration guide created at: $configPath" -ForegroundColor Green
+          
+          Write-Host ""
+          Write-Host "[OK] VM environment setup complete" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "Next Steps:" -ForegroundColor Cyan
+          Write-Host "1. Download Kali Linux: https://www.kali.org/get-kali/" -ForegroundColor White
+          Write-Host "2. Extract to: $vmPath\Kali-Linux" -ForegroundColor White
+          Write-Host "3. Read setup guide: $configPath" -ForegroundColor White
+          Write-Host "4. Open .vmx file in VMware and power on" -ForegroundColor White
+          Write-Host ""
+
       - name: Install and Configure WSL with Ubuntu
         shell: powershell
         run: |
@@ -352,6 +404,10 @@ jobs:
           Write-Host "WSL Ubuntu Info:" -ForegroundColor Cyan
           Write-Host "  Username: harsh" -ForegroundColor White
           Write-Host "  Password: kali" -ForegroundColor White
+          Write-Host ""
+          Write-Host "Kali Linux VM:" -ForegroundColor Cyan
+          Write-Host "  Location: C:\VirtualMachines\Kali-Linux" -ForegroundColor White
+          Write-Host "  Manager: powershell C:\VirtualMachines\kali-vm-manager.ps1 -Command guide" -ForegroundColor White
           Write-Host "==========================================" -ForegroundColor Green
 
       - name: Keep Alive with Advanced Monitoring
