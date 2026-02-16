@@ -193,29 +193,10 @@ jobs:
           
           Write-Host "Memory optimization complete" -ForegroundColor Green
 
-      - name: Install VMware and Virtualization Tools
+      - name: Setup Kali Linux Virtual Machine Support
         shell: powershell
         run: |
-          Write-Host "Installing virtualization tools..." -ForegroundColor Cyan
-          
-          # Enable Hyper-V (built-in Windows virtualization)
-          Write-Host "Enabling Hyper-V..." -ForegroundColor Yellow
-          Enable-WindowsOptionalFeature -FeatureName Hyper-V -Online -All -NoRestart -ErrorAction SilentlyContinue
-          
-          # Enable Virtual Machine Platform
-          Write-Host "Enabling Virtual Machine Platform..." -ForegroundColor Yellow
-          Enable-WindowsOptionalFeature -FeatureName VirtualMachinePlatform -Online -NoRestart -ErrorAction SilentlyContinue
-          
-          # Install Docker (can run Linux containers if needed)
-          Write-Host "Installing Docker for container support..." -ForegroundColor Yellow
-          choco install docker-desktop -y --no-progress -ErrorAction SilentlyContinue
-          
-          Write-Host "Virtualization tools configured" -ForegroundColor Green
-
-      - name: Setup Kali Linux Virtual Machine Environment
-        shell: powershell
-        run: |
-          Write-Host "Setting up Kali Linux VM environment..." -ForegroundColor Cyan
+          Write-Host "Setting up Kali Linux VM support..." -ForegroundColor Cyan
           
           # Create VM storage directory
           $vmPath = "C:\VirtualMachines"
@@ -227,23 +208,35 @@ jobs:
           # Create configuration file with setup instructions
           $configPath = "$vmPath\KALI-SETUP-GUIDE.txt"
           Add-Content -Path $configPath -Value "Kali Linux VM Setup Guide" -ErrorAction SilentlyContinue
-          Add-Content -Path $configPath -Value "1. Download from https://www.kali.org/get-kali/" -ErrorAction SilentlyContinue
-          Add-Content -Path $configPath -Value "2. Select VMware 64-bit" -ErrorAction SilentlyContinue
-          Add-Content -Path $configPath -Value "3. Extract to: $vmPath\Kali-Linux" -ErrorAction SilentlyContinue
-          Add-Content -Path $configPath -Value "4. Open .vmx in VMware Workstation" -ErrorAction SilentlyContinue
-          Add-Content -Path $configPath -Value "5. Power On" -ErrorAction SilentlyContinue
-
+          Add-Content -Path $configPath -Value "" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "STEP 1: Download from https://www.kali.org/get-kali/" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "STEP 2: Select VMware 64-bit image" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "STEP 3: Extract to $vmPath\Kali-Linux" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "STEP 4: Open .vmx file in VMware Workstation Player" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "STEP 5: Power on VM and wait for boot" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "Default Credentials:" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "Username: kali" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "Password: kali" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "Recommended VM Settings:" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "CPU Cores: 4+" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "RAM: 8GB+" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "Disk: 100GB+" -ErrorAction SilentlyContinue
+          
           Write-Host "Configuration guide created at: $configPath" -ForegroundColor Green
           
           Write-Host ""
           Write-Host "[OK] VM environment setup complete" -ForegroundColor Green
           Write-Host ""
           Write-Host "Next Steps:" -ForegroundColor Cyan
-          Write-Host "1. Download Kali Linux: https://www.kali.org/get-kali/" -ForegroundColor White
-          Write-Host "2. Extract to: $vmPath\Kali-Linux" -ForegroundColor White
-          Write-Host "3. Read setup guide: $configPath" -ForegroundColor White
-          Write-Host "4. Open .vmx file in VMware and power on" -ForegroundColor White
+          Write-Host "1. Connect via RDP to the Windows server" -ForegroundColor White
+          Write-Host "2. Download Kali Linux: https://www.kali.org/get-kali/" -ForegroundColor White
+          Write-Host "3. Extract to: $vmPath\Kali-Linux" -ForegroundColor White
+          Write-Host "4. Install VMware Workstation Player (free)" -ForegroundColor White
+          Write-Host "5. Open .vmx file and power on the VM" -ForegroundColor White
           Write-Host ""
+          Write-Host "VM will run on the Windows Server with direct hardware access" -ForegroundColor Green
 
       - name: Install and Configure WSL with Ubuntu
         shell: powershell
