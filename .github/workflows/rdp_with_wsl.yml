@@ -238,57 +238,6 @@ jobs:
           Write-Host ""
           Write-Host "VM will run on the Windows Server with direct hardware access" -ForegroundColor Green
 
-      - name: Install and Configure WSL with Ubuntu
-        shell: powershell
-        run: |
-          Write-Host "Setting up WSL and Ubuntu..." -ForegroundColor Cyan
-          
-          # Update WSL first
-          Write-Host "Updating WSL..." -ForegroundColor Yellow
-          wsl --update 2>$null
-          Start-Sleep -Seconds 10
-          
-          # Wait for WSL to finish any ongoing upgrades
-          Write-Host "Waiting for WSL to finish upgrading..." -ForegroundColor Yellow
-          Start-Sleep -Seconds 10
-          
-          # Try to set default version with retries
-          Write-Host "Setting WSL default version to 2..." -ForegroundColor Yellow
-          $retries = 3
-          $setVersionSuccess = $false
-          
-          for ($i = 1; $i -le $retries; $i++) {
-              try {
-                  wsl --set-default-version 2 2>$null
-                  $setVersionSuccess = $true
-                  break
-              } catch {
-                  Write-Host "Attempt $i failed, waiting before retry..." -ForegroundColor Yellow
-                  Start-Sleep -Seconds 5
-              }
-          }
-          
-          if ($setVersionSuccess) {
-              Write-Host "Default version set to 2" -ForegroundColor Green
-          } else {
-              Write-Host "Could not set version, continuing with installation..." -ForegroundColor Yellow
-          }
-          
-          # Install Ubuntu
-          Write-Host "Installing Ubuntu..." -ForegroundColor Yellow
-          wsl --install -d Ubuntu --no-launch 2>$null
-          Start-Sleep -Seconds 20
-          
-          Write-Host "WSL Setup Complete" -ForegroundColor Green
-          
-          # Show WSL status
-          Write-Host ""
-          Write-Host "WSL Status:" -ForegroundColor Cyan
-          wsl --list --verbose 2>$null
-          
-          Write-Host ""
-          Write-Host "[OK] WSL Ubuntu is installed and ready" -ForegroundColor Green
-
       - name: Create RDP User Account
         shell: powershell
         run: |
@@ -447,13 +396,9 @@ jobs:
           Write-Host "Password     : P@ssword!q218" -ForegroundColor Cyan
           Write-Host "==========================================" -ForegroundColor Green
           Write-Host ""
-          Write-Host "WSL Ubuntu Info:" -ForegroundColor Cyan
-          Write-Host "  Username: harsh" -ForegroundColor White
-          Write-Host "  Password: kali" -ForegroundColor White
-          Write-Host ""
           Write-Host "Kali Linux VM:" -ForegroundColor Cyan
           Write-Host "  Location: C:\VirtualMachines\Kali-Linux" -ForegroundColor White
-          Write-Host "  Manager: powershell C:\VirtualMachines\kali-vm-manager.ps1 -Command guide" -ForegroundColor White
+          Write-Host "  Setup: Follow KALI-SETUP-GUIDE.txt" -ForegroundColor White
           Write-Host "==========================================" -ForegroundColor Green
 
       - name: Keep Alive with Advanced Monitoring
