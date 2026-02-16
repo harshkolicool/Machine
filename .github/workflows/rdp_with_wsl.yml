@@ -243,32 +243,41 @@ jobs:
         run: |
           Write-Host "Setting up WSL and Ubuntu..." -ForegroundColor Cyan
           
-          # Update WSL
+          # Update WSL first
           Write-Host "Updating WSL..." -ForegroundColor Yellow
           wsl --update 2>$null
-          Start-Sleep -Seconds 5
+          Start-Sleep -Seconds 10
           
-          # Set WSL default version to 2
+          # Wait for WSL to finish any ongoing upgrades
+          Write-Host "Waiting for WSL to finish upgrading..." -ForegroundColor Yellow
+          Start-Sleep -Seconds 10
+          
+          # Try to set default version with retries
           Write-Host "Setting WSL default version to 2..." -ForegroundColor Yellow
-          wsl --set-default-version 2 2>$null
-          Start-Sleep -Seconds 3
+          $retries = 3
+          $setVersionSuccess = $false
+          
+          for ($i = 1; $i -le $retries; $i++) {
+              try {
+                  wsl --set-default-version 2 2>$null
+                  $setVersionSuccess = $true
+                  break
+              } catch {
+                  Write-Host "Attempt $i failed, waiting before retry..." -ForegroundColor Yellow
+                  Start-Sleep -Seconds 5
+              }
+          }
+          
+          if ($setVersionSuccess) {
+              Write-Host "Default version set to 2" -ForegroundColor Green
+          } else {
+              Write-Host "Could not set version, continuing with installation..." -ForegroundColor Yellow
+          }
           
           # Install Ubuntu
           Write-Host "Installing Ubuntu..." -ForegroundColor Yellow
           wsl --install -d Ubuntu --no-launch 2>$null
-          Start-Sleep -Seconds 30
-          
-          # Quick Ubuntu setup - only essential packages
-          Write-Host "Configuring Ubuntu (this may take a few moments)..." -ForegroundColor Yellow
-          
-          # Run apt-get with timeout
-          $timeout = 120
-          $process = Start-Process -FilePath "wsl" -ArgumentList "-d Ubuntu bash -c 'sudo apt-get update -y && sudo apt-get install -y python3-pip build-essential gdb'" -NoNewWindow -PassThru
-          
-          if (!$process.WaitForExit($timeout * 1000)) {
-              Write-Host "Package installation taking longer than expected, continuing..." -ForegroundColor Yellow
-              $process.Kill()
-          }
+          Start-Sleep -Seconds 20
           
           Write-Host "WSL Setup Complete" -ForegroundColor Green
           
@@ -278,7 +287,7 @@ jobs:
           wsl --list --verbose 2>$null
           
           Write-Host ""
-          Write-Host "[OK] WSL Ubuntu is ready for use" -ForegroundColor Green
+          Write-Host "[OK] WSL Ubuntu is installed and ready" -ForegroundColor Green
 
       - name: Configure RDP for Peak Performance
         shell: powershell
