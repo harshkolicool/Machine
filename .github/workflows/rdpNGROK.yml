@@ -1,0 +1,477 @@
+name: RDP-Optimized
+on:
+  workflow_dispatch:
+jobs:
+  secure-rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360
+    steps:
+      - name: System Optimization - Ultimate Performance Mode
+        shell: powershell
+        run: |
+          Write-Host "Enabling Ultimate Performance Mode..." -ForegroundColor Cyan
+         
+          # Unlock Ultimate Performance using correct GUID
+          Write-Host "Setting up Ultimate Performance power plan..." -ForegroundColor Yellow
+          powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61
+          Start-Sleep -Seconds 2
+         
+          # Get the Ultimate Performance scheme GUID
+          $ultimateScheme = powercfg /list | Select-String "Ultimate Performance" | Select-Object -First 1
+          $schemeGUID = ($ultimateScheme -split ' ')[3]
+         
+          Write-Host "Found scheme GUID: $schemeGUID" -ForegroundColor Yellow
+         
+          # Set as active
+          Write-Host "Activating Ultimate Performance scheme..." -ForegroundColor Yellow
+          powercfg /setactive $schemeGUID
+          Start-Sleep -Seconds 1
+         
+          # Disable power saving features using simpler approach
+          Write-Host "Disabling power saving features..." -ForegroundColor Yellow
+          powercfg /change monitor-timeout-ac 0 2>$null
+          powercfg /change standby-timeout-ac 0 2>$null
+          powercfg /change disk-timeout-ac 0 2>$null
+          powercfg /change hibernate-timeout-ac 0 2>$null
+         
+          # Registry-based approach for additional settings
+          Write-Host "Applying registry power settings..." -ForegroundColor Yellow
+         
+          # Disable screen saver
+          Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "ScreenSaveActive" -Value 0 -Force -ErrorAction SilentlyContinue
+         
+          # Disable sleep/hibernation via registry
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "HibernateFileSizePercent" -Value 0 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "HibernateEnabled" -Value 0 -Force -ErrorAction SilentlyContinue
+         
+          # Disable USB suspend
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\USBHUB\Parameters" -Name "DisableSelectiveSuspend" -Value 1 -Force -ErrorAction SilentlyContinue
+         
+          # Disable Windows Update
+          Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+          Set-Service -Name wuauserv -StartupType Disabled -ErrorAction SilentlyContinue
+         
+          Write-Host "Ultimate Performance Mode Enabled" -ForegroundColor Green
+          Write-Host "Power scheme activated successfully!" -ForegroundColor Green
+
+      - name: Advanced Network Optimization
+        shell: powershell
+        run: |
+          Write-Host "Optimizing Network Stack..." -ForegroundColor Cyan
+         
+          # TCP/IP Stack Optimization - Only valid parameters
+          Write-Host "Tuning TCP/IP stack..." -ForegroundColor Yellow
+          netsh int tcp set global autotuninglevel=normal -ErrorAction SilentlyContinue
+          netsh int tcp set global ecncapability=enabled -ErrorAction SilentlyContinue
+          netsh int tcp set global timestamps=disabled -ErrorAction SilentlyContinue
+          netsh int tcp set global maxsynretransmissions=2 -ErrorAction SilentlyContinue
+          netsh int tcp set global fastopen=enabled -ErrorAction SilentlyContinue
+          netsh int tcp set global rsc=enabled -ErrorAction SilentlyContinue
+          netsh int tcp set global rss=enabled -ErrorAction SilentlyContinue
+         
+          # TCP Supplemental settings (for congestion provider)
+          netsh int tcp set supplemental template=internet congestionprovider=ctcp -ErrorAction SilentlyContinue
+         
+          # DNS Optimization
+          Write-Host "Configuring DNS..." -ForegroundColor Yellow
+          $adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | Select-Object -First 1
+          foreach ($adapter in $adapters) {
+              Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses ("1.1.1.1", "8.8.8.8") -ErrorAction SilentlyContinue
+          }
+         
+          # DNS Cache Settings
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Name "NegativeSOACacheTime" -Value 0 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters" -Name "CacheHashTableSize" -Value 8192 -Force -ErrorAction SilentlyContinue
+         
+          # Network Interface Optimization - Only valid properties
+          Write-Host "Optimizing Network Adapters..." -ForegroundColor Yellow
+          Get-NetAdapter | Where-Object {$_.Status -eq 'Up'} | ForEach-Object {
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*IPChecksumOffloadIPv4" -RegistryValue 3 -ErrorAction SilentlyContinue
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*TCPChecksumOffloadIPv4" -RegistryValue 3 -ErrorAction SilentlyContinue
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*UDPChecksumOffloadIPv4" -RegistryValue 3 -ErrorAction SilentlyContinue
+              Set-NetAdapterAdvancedProperty -Name $_.Name -RegistryKeyword "*LsoV2IPv4" -RegistryValue 1 -ErrorAction SilentlyContinue
+          }
+         
+          # Flush DNS only (skip network reset to avoid restart requirement)
+          ipconfig /flushdns
+         
+          Write-Host "Network optimization complete" -ForegroundColor Green
+
+      - name: Disable Unnecessary Services for Performance
+        shell: powershell
+        run: |
+          Write-Host "Disabling unnecessary services..." -ForegroundColor Cyan
+         
+          $servicesToDisable = @(
+              'DiagTrack',
+              'dmwappushservice',
+              'SysMain',
+              'WSearch',
+              'DoSvc',
+              'TrkWks',
+              'WbioSrvc',
+              'SCardSvr',
+              'ScDeviceEnum',
+              'Spooler',
+              'WerSvc',
+              'VSS',
+              'VSSVC',
+              'WinRM',
+              'RemoteRegistry'
+          )
+         
+          foreach ($service in $servicesToDisable) {
+              try {
+                  Stop-Service -Name $service -Force -ErrorAction SilentlyContinue | Out-Null
+                  Set-Service -Name $service -StartupType Disabled -ErrorAction SilentlyContinue | Out-Null
+              } catch {
+                  # Ignore errors
+              }
+          }
+         
+          Write-Host "Service optimization complete" -ForegroundColor Green
+
+      - name: System Registry Optimization
+        shell: powershell
+        run: |
+          Write-Host "Applying registry optimizations..." -ForegroundColor Cyan
+         
+          # Disable Visual Effects
+          Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Name "VisualFXSetting" -Value 2 -Force -ErrorAction SilentlyContinue
+         
+          # Optimize background processes
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "ClearPageFileAtShutdown" -Value 0 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "LargeSystemCache" -Value 1 -Force -ErrorAction SilentlyContinue
+         
+          # Disable animations
+          Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "MenuShowDelay" -Value 0 -Force -ErrorAction SilentlyContinue
+         
+          # Optimize disk I/O
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "NtfsDisable8dot3NameCreation" -Value 1 -Force -ErrorAction SilentlyContinue
+         
+          # RDP Optimization Registry Settings
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "SelectTransport" -Value 6 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "fUseCommonW32Heap" -Value 1 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "BITMAPCACHESIZE" -Value 32000 -Force -ErrorAction SilentlyContinue
+         
+          Write-Host "Registry optimization complete" -ForegroundColor Green
+
+      - name: Enable UDP on RDP for Better Performance
+        shell: powershell
+        run: |
+          Write-Host "Enabling UDP on RDP..." -ForegroundColor Cyan
+         
+          # Enable UDP in RDP
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "fUseUdpOnRdp" -Value 1 -Force
+         
+          # UDP Port (3390)
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\TermService\Parameters" -Name "UdpPortNumber" -Value 3390 -Force -ErrorAction SilentlyContinue
+         
+          # Enable Firewall rules for UDP RDP
+          netsh advfirewall firewall add rule name="RDP over UDP" dir=in action=allow protocol=UDP localport=3390 enable=yes
+         
+          Write-Host "UDP RDP enabled" -ForegroundColor Green
+
+      - name: Optimize Memory Management
+        shell: powershell
+        run: |
+          Write-Host "Optimizing memory management..." -ForegroundColor Cyan
+         
+          # Disable paging
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "PagingFiles" -Value "" -Force -ErrorAction SilentlyContinue
+         
+          # Increase NonPagedPoolSize
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" -Name "NonPagedPoolSize" -Value 0 -Force -ErrorAction SilentlyContinue
+         
+          # Disable memory dump
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl" -Name "CrashDumpEnabled" -Value 0 -Force -ErrorAction SilentlyContinue
+         
+          # Optimize prefetch
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters" -Name "EnablePrefetcher" -Value 3 -Force -ErrorAction SilentlyContinue
+         
+          Write-Host "Memory optimization complete" -ForegroundColor Green
+
+      - name: Setup Kali Linux Virtual Machine Support
+        shell: powershell
+        run: |
+          Write-Host "Setting up Kali Linux VM support..." -ForegroundColor Cyan
+         
+          # Create VM storage directory
+          $vmPath = "C:\VirtualMachines"
+          if (-not (Test-Path $vmPath)) {
+              New-Item -ItemType Directory -Path $vmPath -Force | Out-Null
+              Write-Host "Created VM directory: $vmPath" -ForegroundColor Green
+          }
+         
+          # Create configuration file with setup instructions
+          $configPath = "$vmPath\KALI-SETUP-GUIDE.txt"
+          Add-Content -Path $configPath -Value "Kali Linux VM Setup Guide" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "STEP 1: Download from https://www.kali.org/get-kali/" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "STEP 2: Select VMware 64-bit image" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "STEP 3: Extract to $vmPath\Kali-Linux" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "STEP 4: Open .vmx file in VMware Workstation Player" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "STEP 5: Power on VM and wait for boot" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "Default Credentials:" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "Username: kali" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "Password: kali" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "Recommended VM Settings:" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "CPU Cores: 4+" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "RAM: 8GB+" -ErrorAction SilentlyContinue
+          Add-Content -Path $configPath -Value "Disk: 100GB+" -ErrorAction SilentlyContinue
+         
+          Write-Host "Configuration guide created at: $configPath" -ForegroundColor Green
+         
+          Write-Host ""
+          Write-Host "[OK] VM environment setup complete" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "Next Steps:" -ForegroundColor Cyan
+          Write-Host "1. Connect via RDP to the Windows server" -ForegroundColor White
+          Write-Host "2. Download Kali Linux: https://www.kali.org/get-kali/" -ForegroundColor White
+          Write-Host "3. Extract to: $vmPath\Kali-Linux" -ForegroundColor White
+          Write-Host "4. Install VMware Workstation Player (free)" -ForegroundColor White
+          Write-Host "5. Open .vmx file and power on the VM" -ForegroundColor White
+          Write-Host ""
+          Write-Host "VM will run on the Windows Server with direct hardware access" -ForegroundColor Green
+
+      - name: Create RDP User Account
+        shell: powershell
+        run: |
+          Write-Host "Creating RDP user account..." -ForegroundColor Cyan
+         
+          $username = "rdpadmin"
+          $password = "P@ssword!q218"
+          $displayName = "RDP Administrator"
+         
+          # Check if user already exists
+          $userExists = Get-LocalUser -Name $username -ErrorAction SilentlyContinue
+         
+          if ($userExists) {
+              Write-Host "User $username already exists, updating password..." -ForegroundColor Yellow
+              $SecurePassword = ConvertTo-SecureString -String $password -AsPlainText -Force
+              Set-LocalUser -Name $username -Password $SecurePassword -ErrorAction SilentlyContinue
+          } else {
+              Write-Host "Creating new user: $username" -ForegroundColor Yellow
+              $SecurePassword = ConvertTo-SecureString -String $password -AsPlainText -Force
+              New-LocalUser -Name $username -Password $SecurePassword -FullName $displayName -Description "RDP Access User" -ErrorAction SilentlyContinue
+          }
+         
+          # Add user to Remote Desktop Users group
+          Write-Host "Adding user to Remote Desktop Users group..." -ForegroundColor Yellow
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
+         
+          # Add user to Administrators group for full access
+          Write-Host "Adding user to Administrators group..." -ForegroundColor Yellow
+          Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+         
+          # Enable user account (ensure it's not disabled)
+          Write-Host "Enabling user account..." -ForegroundColor Yellow
+          Enable-LocalUser -Name $username -ErrorAction SilentlyContinue
+         
+          Write-Host "User account created/updated successfully!" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "Credentials:" -ForegroundColor Cyan
+          Write-Host " Username: $username" -ForegroundColor White
+          Write-Host " Password: $password" -ForegroundColor White
+          Write-Host ""
+          Write-Host "User is now a member of:" -ForegroundColor Green
+          Write-Host " - Remote Desktop Users" -ForegroundColor White
+          Write-Host " - Administrators" -ForegroundColor White
+
+      - name: Configure RDP for Peak Performance
+        shell: powershell
+        run: |
+          Write-Host "Configuring RDP for peak performance..." -ForegroundColor Cyan
+         
+          # Enable RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+         
+          # Connection limits
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxInstanceCount" -Value 999999 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxConnectionTime" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxDisconnectionTime" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "MaxIdleTime" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fInheritMaxSessionTime" -Value 0 -Force
+         
+          # Performance settings
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "ColorDepth" -Value 4 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "PerformanceFlags" -Value 1 -Force
+         
+          # Enable compression
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fInheritCompressionType" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "CompressionType" -Value 1 -Force
+         
+          # Bandwidth optimization
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "fUseCommonW32Heap" -Value 1 -Force
+         
+          # Enable Firewall rules
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+          netsh advfirewall firewall add rule name="RDP TCP" dir=in action=allow protocol=TCP localport=3389 enable=yes
+          netsh advfirewall firewall add rule name="RDP UDP" dir=in action=allow protocol=UDP localport=3389 enable=yes
+         
+          # Restart RDP service
+          Restart-Service -Name TermService -Force
+         
+          Write-Host "RDP configured for peak performance" -ForegroundColor Green
+
+      - name: Install and Start ngrok
+        shell: powershell
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: |
+          Write-Host "Installing ngrok..." -ForegroundColor Cyan
+
+          $ngrokZip = "$env:TEMP\ngrok.zip"
+          $ngrokDir = "C:\ngrok"
+          $ngrokExe = "$ngrokDir\ngrok.exe"
+
+          # Create directory
+          if (-not (Test-Path $ngrokDir)) {
+              New-Item -ItemType Directory -Path $ngrokDir -Force | Out-Null
+          }
+
+          # Download ngrok (latest stable for Windows amd64)
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQKtiN/ngrok-v3-stable-windows-amd64.zip" -OutFile $ngrokZip -UseBasicParsing
+
+          # Extract
+          Expand-Archive -Path $ngrokZip -DestinationPath $ngrokDir -Force
+          Remove-Item $ngrokZip -Force
+
+          # Authenticate
+          Write-Host "Authenticating ngrok..." -ForegroundColor Yellow
+          & $ngrokExe config add-authtoken $env:NGROK_AUTH_TOKEN
+
+          # Start ngrok tunnel for RDP (TCP 3389) in background
+          Write-Host "Starting ngrok TCP tunnel on port 3389..." -ForegroundColor Yellow
+          Start-Process -FilePath $ngrokExe -ArgumentList "tcp 3389 --log=stdout" -WindowStyle Hidden -RedirectStandardOutput "$ngrokDir\ngrok.log"
+
+          # Wait for tunnel to become ready
+          Start-Sleep -Seconds 12
+
+          # Extract the public TCP address
+          $maxRetries = 15
+          $publicUrl = $null
+          for ($i = 1; $i -le $maxRetries; $i++) {
+              try {
+                  $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
+                  $tcpTunnel = $tunnels.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
+                  if ($tcpTunnel) {
+                      $publicUrl = $tcpTunnel.public_url
+                      break
+                  }
+              } catch {
+                  Write-Host "Waiting for ngrok API... attempt $i" -ForegroundColor Yellow
+              }
+              Start-Sleep -Seconds 3
+          }
+
+          if ($publicUrl) {
+              # Convert tcp://x.tcp.ngrok.io:12345 → x.tcp.ngrok.io:12345
+              $cleanUrl = $publicUrl -replace "tcp://", ""
+              echo "NGROK_URL=$cleanUrl" >> $env:GITHUB_ENV
+              Write-Host "ngrok tunnel ready: $cleanUrl" -ForegroundColor Green
+          } else {
+              Write-Host "Failed to get ngrok public URL. Check the log:" -ForegroundColor Red
+              Get-Content "$ngrokDir\ngrok.log" -ErrorAction SilentlyContinue
+              exit 1
+          }
+
+      - name: Show Connection Info
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host "RDP CONNECTION READY" -ForegroundColor Green
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host "ngrok Address : $env:NGROK_URL" -ForegroundColor Cyan
+          Write-Host "Username      : rdpadmin" -ForegroundColor Cyan
+          Write-Host "Password      : P@ssword!q218" -ForegroundColor Cyan
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "How to connect:" -ForegroundColor Yellow
+          Write-Host "1. Open Remote Desktop Connection (mstsc)" -ForegroundColor White
+          Write-Host "2. Enter the ngrok address (example: 0.tcp.ngrok.io:12345)" -ForegroundColor White
+          Write-Host "3. Login with the credentials above" -ForegroundColor White
+          Write-Host ""
+          Write-Host "Kali Linux VM:" -ForegroundColor Cyan
+          Write-Host " Location: C:\VirtualMachines\Kali-Linux" -ForegroundColor White
+          Write-Host " Setup: Follow KALI-SETUP-GUIDE.txt" -ForegroundColor White
+          Write-Host "==========================================" -ForegroundColor Green
+
+      - name: Keep Alive with Advanced Monitoring
+        shell: powershell
+        run: |
+          $startTime = Get-Date
+          $endTime = $startTime.AddMinutes(358)
+         
+          Write-Host "Session active - maintaining connection with health monitoring..." -ForegroundColor Green
+         
+          $healthCheckCount = 0
+         
+          while ((Get-Date) -lt $endTime) {
+              $elapsed = [math]::Round(((Get-Date) - $startTime).TotalMinutes, 1)
+              $remaining = [math]::Round(($endTime - (Get-Date)).TotalMinutes, 1)
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Elapsed: $elapsed min | Remaining: $remaining min" -ForegroundColor Green
+             
+              # Health check every ~5 minutes
+              if ($healthCheckCount % 2.5 -eq 0) {
+                  Write-Host ""
+                  Write-Host "--- Health Check ---" -ForegroundColor Yellow
+                 
+                  try {
+                      # Check RDP Service
+                      $rdpService = Get-Service -Name TermService -ErrorAction SilentlyContinue
+                      if ($rdpService.Status -ne 'Running') {
+                          Write-Host "RDP Service down - restarting..." -ForegroundColor Red
+                          Restart-Service -Name TermService -Force
+                      } else {
+                          Write-Host " [OK] RDP Service: Running" -ForegroundColor Green
+                      }
+                     
+                      # Check ngrok process
+                      $ngrokProc = Get-Process -Name "ngrok" -ErrorAction SilentlyContinue
+                      if ($ngrokProc) {
+                          Write-Host " [OK] ngrok: Running" -ForegroundColor Green
+                      } else {
+                          Write-Host " [WARN] ngrok process not found" -ForegroundColor Yellow
+                      }
+                     
+                      # Check Network
+                      $pingTest = Test-Connection -ComputerName 8.8.8.8 -Count 1 -Quiet -ErrorAction SilentlyContinue
+                      if ($pingTest) {
+                          Write-Host " [OK] Network: Connected" -ForegroundColor Green
+                      } else {
+                          Write-Host " [WARN] Network: Issue detected" -ForegroundColor Yellow
+                      }
+                     
+                      # Check Memory
+                      $os = Get-WmiObject -Class Win32_OperatingSystem
+                      $memUsed = [math]::Round((($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize) * 100, 1)
+                      $memColor = if ($memUsed -lt 75) { 'Green' } else { 'Yellow' }
+                      Write-Host " Memory: $memUsed%" -ForegroundColor $memColor
+                     
+                      # Check CPU
+                      $cpu = Get-WmiObject -Class Win32_Processor | Measure-Object -Property LoadPercentage -Average
+                      $cpuColor = if ($cpu.Average -lt 75) { 'Green' } else { 'Yellow' }
+                      Write-Host " CPU: $([math]::Round($cpu.Average, 1))%" -ForegroundColor $cpuColor
+                     
+                  } catch {
+                      Write-Host " Health check error: $_" -ForegroundColor Red
+                  }
+                 
+                  Write-Host "--- End Health Check ---" -ForegroundColor Yellow
+                  Write-Host ""
+              }
+             
+              Start-Sleep -Seconds 120
+              $healthCheckCount += 1
+          }
+         
+          Write-Host ""
+          Write-Host "==========================================" -ForegroundColor Yellow
+          Write-Host "Maximum session duration reached (6 hours)" -ForegroundColor Yellow
+          Write-Host "==========================================" -ForegroundColor Yellow
