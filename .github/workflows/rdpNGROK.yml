@@ -336,19 +336,26 @@ jobs:
 
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-          # Correct current download URL for ngrok v3 Windows amd64
-          $downloadUrl = "https://bin.equinox.io/c/bNyj1mQKtiN/ngrok-v3-stable-windows-amd64.zip"
+          # Current official download URL (from ngrok docs - July 2026)
+          $downloadUrl = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
           
-          Write-Host "Downloading ngrok v3 from official source..." -ForegroundColor Yellow
+          Write-Host "Downloading from: $downloadUrl" -ForegroundColor Yellow
+          
           try {
-              Invoke-WebRequest -Uri $downloadUrl -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 90
+              Invoke-WebRequest -Uri $downloadUrl -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 120
           } catch {
-              Write-Host "Primary download failed, trying mirror..." -ForegroundColor Yellow
-              # Alternative reliable source
-              Invoke-WebRequest -Uri "https://github.com/ngrok/ngrok/releases/latest/download/ngrok-v3-stable-windows-amd64.zip" -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 90
+              Write-Host "Primary URL failed. Trying alternative bin.ngrok.com..." -ForegroundColor Yellow
+              # Fallback (used by Chocolatey packages)
+              Invoke-WebRequest -Uri "https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 120
           }
 
-          # Extract
+          # Check if download succeeded
+          if (-not (Test-Path $ngrokZip) -or (Get-Item $ngrokZip).Length -lt 1000000) {
+              Write-Host "Download failed or file too small!" -ForegroundColor Red
+              exit 1
+          }
+
+          Write-Host "Download successful. Extracting..." -ForegroundColor Green
           Expand-Archive -Path $ngrokZip -DestinationPath $ngrokDir -Force
           Remove-Item $ngrokZip -Force -ErrorAction SilentlyContinue
 
@@ -358,18 +365,22 @@ jobs:
               exit 1
           }
 
-          # Verify version (must be v3)
+          # Show version
           $versionOutput = & $ngrokExe version
           Write-Host "Installed version: $versionOutput" -ForegroundColor Cyan
-          if ($versionOutput -notmatch "3\.") {
-              Write-Host "WARNING: This does not look like ngrok v3!" -ForegroundColor Red
-          }
 
-          # Authenticate (v3 syntax)
+          # Authenticate (works for both v2 and v3)
           Write-Host "Authenticating ngrok..." -ForegroundColor Yellow
-          & $ngrokExe config add-authtoken $env:NGROK_AUTH_TOKEN
+          
+          # Try v3 command first
+          & $ngrokExe config add-authtoken $env:NGROK_AUTH_TOKEN 2>$null
           if ($LASTEXITCODE -ne 0) {
-              Write-Host "Failed to add authtoken. Double-check your NGROK_AUTH_TOKEN secret." -ForegroundColor Red
+              # Fallback to old v2 style just in case
+              & $ngrokExe authtoken $env:NGROK_AUTH_TOKEN
+          }
+          
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "Failed to add authtoken. Check your NGROK_AUTH_TOKEN secret." -ForegroundColor Red
               exit 1
           }
           Write-Host "Authtoken added successfully" -ForegroundColor Green
@@ -382,16 +393,16 @@ jobs:
               -RedirectStandardOutput "$ngrokDir\ngrok.log" `
               -RedirectStandardError "$ngrokDir\ngrok-error.log"
 
-          # Wait for the local API to come up
-          Start-Sleep -Seconds 12
+          # Wait for the local API
+          Start-Sleep -Seconds 15
 
           # Get the public URL
-          $maxRetries = 20
+          $maxRetries = 25
           $publicUrl = $null
 
           for ($i = 1; $i -le $maxRetries; $i++) {
               try {
-                  $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
+                  $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5 -ErrorAction Stop
                   $tcpTunnel = $response.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
                   
                   if ($tcpTunnel -and $tcpTunnel.public_url) {
