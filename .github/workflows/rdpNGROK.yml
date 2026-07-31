@@ -322,28 +322,30 @@ jobs:
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          Write-Host "Installing ngrok..." -ForegroundColor Cyan
+          Write-Host "Installing ngrok v3..." -ForegroundColor Cyan
 
           $ngrokZip = "$env:TEMP\ngrok.zip"
           $ngrokDir = "C:\ngrok"
           $ngrokExe = "$ngrokDir\ngrok.exe"
 
-          # Create directory
-          if (-not (Test-Path $ngrokDir)) {
-              New-Item -ItemType Directory -Path $ngrokDir -Force | Out-Null
+          # Clean previous installation
+          if (Test-Path $ngrokDir) {
+              Remove-Item $ngrokDir -Recurse -Force -ErrorAction SilentlyContinue
           }
+          New-Item -ItemType Directory -Path $ngrokDir -Force | Out-Null
 
-          # Download latest ngrok (correct current URL)
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          $downloadUrl = "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-v3-stable-windows-amd64.zip"
+
+          # Correct current download URL for ngrok v3 Windows amd64
+          $downloadUrl = "https://bin.equinox.io/c/bNyj1mQKtiN/ngrok-v3-stable-windows-amd64.zip"
           
-          Write-Host "Downloading from: $downloadUrl" -ForegroundColor Yellow
+          Write-Host "Downloading ngrok v3 from official source..." -ForegroundColor Yellow
           try {
-              Invoke-WebRequest -Uri $downloadUrl -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 60
+              Invoke-WebRequest -Uri $downloadUrl -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 90
           } catch {
-              Write-Host "Primary URL failed, trying alternative..." -ForegroundColor Yellow
-              # Fallback URL (sometimes works when the main one is rate-limited)
-              Invoke-WebRequest -Uri "https://github.com/inconshreveable/ngrok/releases/download/v3.15.0/ngrok-v3-stable-windows-amd64.zip" -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 60
+              Write-Host "Primary download failed, trying mirror..." -ForegroundColor Yellow
+              # Alternative reliable source
+              Invoke-WebRequest -Uri "https://github.com/ngrok/ngrok/releases/latest/download/ngrok-v3-stable-windows-amd64.zip" -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 90
           }
 
           # Extract
@@ -351,53 +353,70 @@ jobs:
           Remove-Item $ngrokZip -Force -ErrorAction SilentlyContinue
 
           if (-not (Test-Path $ngrokExe)) {
-              Write-Host "ngrok.exe not found after extraction!" -ForegroundColor Red
-              Get-ChildItem $ngrokDir -Recurse
+              Write-Host "ERROR: ngrok.exe not found after extraction!" -ForegroundColor Red
+              Get-ChildItem $ngrokDir -Recurse | Format-Table Name, Length
               exit 1
           }
 
-          # Authenticate
+          # Verify version (must be v3)
+          $versionOutput = & $ngrokExe version
+          Write-Host "Installed version: $versionOutput" -ForegroundColor Cyan
+          if ($versionOutput -notmatch "3\.") {
+              Write-Host "WARNING: This does not look like ngrok v3!" -ForegroundColor Red
+          }
+
+          # Authenticate (v3 syntax)
           Write-Host "Authenticating ngrok..." -ForegroundColor Yellow
           & $ngrokExe config add-authtoken $env:NGROK_AUTH_TOKEN
           if ($LASTEXITCODE -ne 0) {
-              Write-Host "Failed to add authtoken. Check if NGROK_AUTH_TOKEN secret is correct." -ForegroundColor Red
+              Write-Host "Failed to add authtoken. Double-check your NGROK_AUTH_TOKEN secret." -ForegroundColor Red
               exit 1
           }
+          Write-Host "Authtoken added successfully" -ForegroundColor Green
 
-          # Start ngrok tunnel for RDP (TCP 3389) in background
+          # Start TCP tunnel in background
           Write-Host "Starting ngrok TCP tunnel on port 3389..." -ForegroundColor Yellow
-          Start-Process -FilePath $ngrokExe -ArgumentList "tcp 3389 --log=stdout" -WindowStyle Hidden -RedirectStandardOutput "$ngrokDir\ngrok.log" -RedirectStandardError "$ngrokDir\ngrok-error.log"
+          Start-Process -FilePath $ngrokExe `
+              -ArgumentList "tcp", "3389", "--log=stdout" `
+              -WindowStyle Hidden `
+              -RedirectStandardOutput "$ngrokDir\ngrok.log" `
+              -RedirectStandardError "$ngrokDir\ngrok-error.log"
 
-          # Wait for tunnel to become ready
-          Start-Sleep -Seconds 15
+          # Wait for the local API to come up
+          Start-Sleep -Seconds 12
 
-          # Extract the public TCP address
+          # Get the public URL
           $maxRetries = 20
           $publicUrl = $null
+
           for ($i = 1; $i -le $maxRetries; $i++) {
               try {
-                  $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
-                  $tcpTunnel = $tunnels.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
+                  $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
+                  $tcpTunnel = $response.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
+                  
                   if ($tcpTunnel -and $tcpTunnel.public_url) {
                       $publicUrl = $tcpTunnel.public_url
                       break
                   }
               } catch {
-                  Write-Host "Waiting for ngrok API... attempt $i/$maxRetries" -ForegroundColor Yellow
+                  Write-Host "Waiting for ngrok API... ($i/$maxRetries)" -ForegroundColor Yellow
               }
               Start-Sleep -Seconds 3
           }
 
           if ($publicUrl) {
-              # Convert tcp://0.tcp.ngrok.io:12345 → 0.tcp.ngrok.io:12345
               $cleanUrl = $publicUrl -replace "tcp://", ""
               echo "NGROK_URL=$cleanUrl" >> $env:GITHUB_ENV
-              Write-Host "ngrok tunnel ready: $cleanUrl" -ForegroundColor Green
+              Write-Host ""
+              Write-Host "========================================" -ForegroundColor Green
+              Write-Host "ngrok tunnel is ready!" -ForegroundColor Green
+              Write-Host "Address: $cleanUrl" -ForegroundColor Cyan
+              Write-Host "========================================" -ForegroundColor Green
           } else {
-              Write-Host "Failed to get ngrok public URL. Dumping logs:" -ForegroundColor Red
-              Write-Host "----- ngrok.log -----" -ForegroundColor Yellow
+              Write-Host "Failed to get public URL. Dumping logs:" -ForegroundColor Red
+              Write-Host "`n----- ngrok.log -----" -ForegroundColor Yellow
               Get-Content "$ngrokDir\ngrok.log" -ErrorAction SilentlyContinue
-              Write-Host "----- ngrok-error.log -----" -ForegroundColor Yellow
+              Write-Host "`n----- ngrok-error.log -----" -ForegroundColor Yellow
               Get-Content "$ngrokDir\ngrok-error.log" -ErrorAction SilentlyContinue
               exit 1
           }
