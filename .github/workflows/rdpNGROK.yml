@@ -322,114 +322,146 @@ jobs:
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          Write-Host "Installing ngrok v3..." -ForegroundColor Cyan
+          Write-Host "Installing ngrok..." -ForegroundColor Cyan
 
-          $ngrokZip = "$env:TEMP\ngrok.zip"
           $ngrokDir = "C:\ngrok"
           $ngrokExe = "$ngrokDir\ngrok.exe"
+          $ngrokZip = "$env:TEMP\ngrok.zip"
 
-          # Clean previous installation
-          if (Test-Path $ngrokDir) {
-              Remove-Item $ngrokDir -Recurse -Force -ErrorAction SilentlyContinue
-          }
+          # Clean old install
+          if (Test-Path $ngrokDir) { Remove-Item $ngrokDir -Recurse -Force -ErrorAction SilentlyContinue }
           New-Item -ItemType Directory -Path $ngrokDir -Force | Out-Null
 
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-          # Current official download URL (from ngrok docs - July 2026)
-          $downloadUrl = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
-          
-          Write-Host "Downloading from: $downloadUrl" -ForegroundColor Yellow
-          
-          try {
-              Invoke-WebRequest -Uri $downloadUrl -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 120
-          } catch {
-              Write-Host "Primary URL failed. Trying alternative bin.ngrok.com..." -ForegroundColor Yellow
-              # Fallback (used by Chocolatey packages)
-              Invoke-WebRequest -Uri "https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 120
+          # Official current download URL (July 2026)
+          $urls = @(
+              "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip",
+              "https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip"
+          )
+
+          $downloaded = $false
+          foreach ($url in $urls) {
+              try {
+                  Write-Host "Trying: $url" -ForegroundColor Yellow
+                  Invoke-WebRequest -Uri $url -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 90
+                  if ((Get-Item $ngrokZip).Length -gt 5000000) {
+                      $downloaded = $true
+                      break
+                  }
+              } catch {
+                  Write-Host "Failed: $_" -ForegroundColor Red
+              }
           }
 
-          # Check if download succeeded
-          if (-not (Test-Path $ngrokZip) -or (Get-Item $ngrokZip).Length -lt 1000000) {
-              Write-Host "Download failed or file too small!" -ForegroundColor Red
+          if (-not $downloaded) {
+              Write-Host "All download attempts failed!" -ForegroundColor Red
               exit 1
           }
 
-          Write-Host "Download successful. Extracting..." -ForegroundColor Green
           Expand-Archive -Path $ngrokZip -DestinationPath $ngrokDir -Force
           Remove-Item $ngrokZip -Force -ErrorAction SilentlyContinue
 
           if (-not (Test-Path $ngrokExe)) {
-              Write-Host "ERROR: ngrok.exe not found after extraction!" -ForegroundColor Red
-              Get-ChildItem $ngrokDir -Recurse | Format-Table Name, Length
+              Write-Host "ngrok.exe not found!" -ForegroundColor Red
+              Get-ChildItem $ngrokDir -Recurse
               exit 1
           }
 
-          # Show version
-          $versionOutput = & $ngrokExe version
-          Write-Host "Installed version: $versionOutput" -ForegroundColor Cyan
+          Write-Host "Version: $(& $ngrokExe version)" -ForegroundColor Cyan
 
-          # Authenticate (works for both v2 and v3)
-          Write-Host "Authenticating ngrok..." -ForegroundColor Yellow
-          
-          # Try v3 command first
-          & $ngrokExe config add-authtoken $env:NGROK_AUTH_TOKEN 2>$null
+          # Authenticate
+          Write-Host "Adding authtoken..." -ForegroundColor Yellow
+          & $ngrokExe config add-authtoken $env:NGROK_AUTH_TOKEN
           if ($LASTEXITCODE -ne 0) {
-              # Fallback to old v2 style just in case
               & $ngrokExe authtoken $env:NGROK_AUTH_TOKEN
           }
-          
           if ($LASTEXITCODE -ne 0) {
-              Write-Host "Failed to add authtoken. Check your NGROK_AUTH_TOKEN secret." -ForegroundColor Red
+              Write-Host "Authtoken failed! Check your secret." -ForegroundColor Red
               exit 1
           }
-          Write-Host "Authtoken added successfully" -ForegroundColor Green
 
-          # Start TCP tunnel in background
-          Write-Host "Starting ngrok TCP tunnel on port 3389..." -ForegroundColor Yellow
-          Start-Process -FilePath $ngrokExe `
-              -ArgumentList "tcp", "3389", "--log=stdout" `
+          # Start tunnel
+          Write-Host "Starting TCP tunnel on 3389..." -ForegroundColor Yellow
+          Start-Process -FilePath $ngrokExe -ArgumentList "tcp","3389","--log=stdout" `
               -WindowStyle Hidden `
               -RedirectStandardOutput "$ngrokDir\ngrok.log" `
               -RedirectStandardError "$ngrokDir\ngrok-error.log"
 
-          # Wait for the local API
-          Start-Sleep -Seconds 15
+          Start-Sleep -Seconds 18
 
-          # Get the public URL
-          $maxRetries = 25
+          # Get public URL
           $publicUrl = $null
-
-          for ($i = 1; $i -le $maxRetries; $i++) {
+          for ($i = 1; $i -le 30; $i++) {
               try {
-                  $response = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5 -ErrorAction Stop
-                  $tcpTunnel = $response.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
-                  
-                  if ($tcpTunnel -and $tcpTunnel.public_url) {
-                      $publicUrl = $tcpTunnel.public_url
+                  $tunnels = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
+                  $tcp = $tunnels.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
+                  if ($tcp.public_url) {
+                      $publicUrl = $tcp.public_url
                       break
                   }
-              } catch {
-                  Write-Host "Waiting for ngrok API... ($i/$maxRetries)" -ForegroundColor Yellow
-              }
+              } catch {}
+              Write-Host "Waiting for tunnel... ($i/30)" -ForegroundColor Yellow
               Start-Sleep -Seconds 3
           }
 
           if ($publicUrl) {
-              $cleanUrl = $publicUrl -replace "tcp://", ""
-              echo "NGROK_URL=$cleanUrl" >> $env:GITHUB_ENV
+              $clean = $publicUrl -replace "tcp://",""
+              echo "NGROK_URL=$clean" >> $env:GITHUB_ENV
               Write-Host ""
               Write-Host "========================================" -ForegroundColor Green
-              Write-Host "ngrok tunnel is ready!" -ForegroundColor Green
-              Write-Host "Address: $cleanUrl" -ForegroundColor Cyan
+              Write-Host "ngrok READY → $clean" -ForegroundColor Green
               Write-Host "========================================" -ForegroundColor Green
           } else {
-              Write-Host "Failed to get public URL. Dumping logs:" -ForegroundColor Red
-              Write-Host "`n----- ngrok.log -----" -ForegroundColor Yellow
+              Write-Host "Could not get public URL. Logs:" -ForegroundColor Red
               Get-Content "$ngrokDir\ngrok.log" -ErrorAction SilentlyContinue
-              Write-Host "`n----- ngrok-error.log -----" -ForegroundColor Yellow
               Get-Content "$ngrokDir\ngrok-error.log" -ErrorAction SilentlyContinue
               exit 1
+          }
+
+      - name: Show Connection Info
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host "RDP CONNECTION READY" -ForegroundColor Green
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host "ngrok Address : $env:NGROK_URL" -ForegroundColor Cyan
+          Write-Host "Username      : rdpadmin" -ForegroundColor Cyan
+          Write-Host "Password      : P@ssword!q218" -ForegroundColor Cyan
+          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "Connect with Microsoft Remote Desktop using the address above" -ForegroundColor Yellow
+
+      - name: Keep Alive + Auto-restart ngrok
+        shell: powershell
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: |
+          $endTime = (Get-Date).AddMinutes(350)
+          $ngrokExe = "C:\ngrok\ngrok.exe"
+
+          while ((Get-Date) -lt $endTime) {
+              Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Alive..." -ForegroundColor Green
+
+              # Check if ngrok is still running
+              $proc = Get-Process -Name "ngrok" -ErrorAction SilentlyContinue
+              if (-not $proc) {
+                  Write-Host "ngrok died → restarting..." -ForegroundColor Yellow
+                  Start-Process -FilePath $ngrokExe -ArgumentList "tcp","3389","--log=stdout" `
+                      -WindowStyle Hidden `
+                      -RedirectStandardOutput "C:\ngrok\ngrok.log" `
+                      -RedirectStandardError "C:\ngrok\ngrok-error.log"
+                  Start-Sleep -Seconds 12
+              }
+
+              # Also check RDP service
+              $rdp = Get-Service -Name TermService -ErrorAction SilentlyContinue
+              if ($rdp.Status -ne "Running") {
+                  Restart-Service -Name TermService -Force
+              }
+
+              Start-Sleep -Seconds 90
           }
 
       - name: Show Connection Info
