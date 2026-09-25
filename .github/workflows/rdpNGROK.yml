@@ -335,35 +335,85 @@ jobs:
 
           Write-Host "ngrok installed and authenticated." -ForegroundColor Green
 
-      - name: Start ngrok TCP Tunnel
+      - name: Start ngrok and Keep RDP Alive
         shell: powershell
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          Write-Host "Starting ngrok TCP tunnel..." -ForegroundColor Cyan
+          Write-Host "Starting persistent ngrok TCP tunnel..." -ForegroundColor Cyan
 
           $ngrokExe = "C:\ngrok\ngrok.exe"
+          $ngrokLog = "C:\ngrok\ngrok.log"
+          $ngrokErr = "C:\ngrok\ngrok-error.log"
+
+          if (-not (Test-Path $ngrokExe)) {
+              Write-Host "ERROR: ngrok.exe does not exist." -ForegroundColor Red
+              exit 1
+          }
+
+          # Re-authenticate in this same persistent step.
+          & $ngrokExe config add-authtoken $env:NGROK_AUTH_TOKEN | Out-Null
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "ERROR: ngrok authentication failed." -ForegroundColor Red
+              exit 1
+          }
+
+          # Confirm RDP is healthy before exposing it.
+          $localRdp = Test-NetConnection `
+              -ComputerName 127.0.0.1 `
+              -Port 3389 `
+              -WarningAction SilentlyContinue
+
+          if (-not $localRdp.TcpTestSucceeded) {
+              Write-Host "ERROR: RDP is not reachable locally on TCP 3389." -ForegroundColor Red
+              exit 1
+          }
 
           Get-Process ngrok -ErrorAction SilentlyContinue |
               Stop-Process -Force -ErrorAction SilentlyContinue
 
-          Start-Process `
+          Remove-Item $ngrokLog -Force -ErrorAction SilentlyContinue
+          Remove-Item $ngrokErr -Force -ErrorAction SilentlyContinue
+
+          # Start ngrok and keep it inside THIS step for the full session.
+          $ngrokProcess = Start-Process `
               -FilePath $ngrokExe `
               -ArgumentList "tcp","3389","--log=stdout","--log-format=json" `
               -WindowStyle Hidden `
-              -RedirectStandardOutput "C:\ngrok\ngrok.log" `
-              -RedirectStandardError "C:\ngrok\ngrok-error.log"
+              -RedirectStandardOutput $ngrokLog `
+              -RedirectStandardError $ngrokErr `
+              -PassThru
 
+          Write-Host "ngrok PID: $($ngrokProcess.Id)" -ForegroundColor DarkGray
+
+          # Discover the public TCP URL.
+          # First try ngrok's local API. If it is unavailable, parse the ngrok log.
           $publicUrl = $null
 
-          for ($i = 1; $i -le 45; $i++) {
+          for ($i = 1; $i -le 60; $i++) {
               Start-Sleep -Seconds 2
 
+              if ($ngrokProcess.HasExited) {
+                  Write-Host "ERROR: ngrok exited unexpectedly." -ForegroundColor Red
+                  Write-Host "--- ngrok stdout ---" -ForegroundColor Yellow
+                  Get-Content $ngrokLog -ErrorAction SilentlyContinue
+                  Write-Host "--- ngrok stderr ---" -ForegroundColor Yellow
+                  Get-Content $ngrokErr -ErrorAction SilentlyContinue
+                  exit 1
+              }
+
+              # Method 1: local ngrok API.
               try {
                   $tunnels = Invoke-RestMethod `
                       -Uri "http://127.0.0.1:4040/api/tunnels" `
-                      -TimeoutSec 4
+                      -TimeoutSec 2
 
                   $tcpTunnel = $tunnels.tunnels |
-                      Where-Object { $_.proto -eq "tcp" } |
+                      Where-Object {
+                          $_.proto -eq "tcp" -and
+                          $_.public_url
+                      } |
                       Select-Object -First 1
 
                   if ($tcpTunnel.public_url) {
@@ -371,117 +421,55 @@ jobs:
                       break
                   }
               }
-              catch {
-                  Write-Host "Waiting for ngrok... $i/45" -ForegroundColor DarkGray
+              catch {}
+
+              # Method 2: parse ngrok JSON log if the local API is unavailable.
+              if (Test-Path $ngrokLog) {
+                  $logLines = Get-Content $ngrokLog -ErrorAction SilentlyContinue
+
+                  foreach ($line in $logLines) {
+                      if ($line -match 'tcp://[A-Za-z0-9\.\-]+:\d+') {
+                          $publicUrl = $Matches[0]
+                      }
+                  }
+
+                  if ($publicUrl) {
+                      break
+                  }
               }
+
+              Write-Host "Waiting for ngrok tunnel... $i/60" -ForegroundColor DarkGray
           }
 
           if (-not $publicUrl) {
-              Write-Host "ERROR: ngrok tunnel did not become ready." -ForegroundColor Red
-
+              Write-Host "ERROR: Could not determine the ngrok public TCP address." -ForegroundColor Red
               Write-Host "--- ngrok stdout ---" -ForegroundColor Yellow
-              Get-Content "C:\ngrok\ngrok.log" -ErrorAction SilentlyContinue
-
+              Get-Content $ngrokLog -ErrorAction SilentlyContinue
               Write-Host "--- ngrok stderr ---" -ForegroundColor Yellow
-              Get-Content "C:\ngrok\ngrok-error.log" -ErrorAction SilentlyContinue
-
+              Get-Content $ngrokErr -ErrorAction SilentlyContinue
               exit 1
           }
 
-          $clean = $publicUrl -replace "^tcp://", ""
+          $currentUrl = $publicUrl -replace "^tcp://", ""
 
-          "NGROK_URL=$clean" |
-              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          Write-Host "ngrok tunnel ready: $clean" -ForegroundColor Green
-
-      - name: Verify ngrok Tunnel Registration
-        shell: powershell
-        run: |
-          Write-Host "Verifying ngrok tunnel registration..." -ForegroundColor Cyan
-
-          if ([string]::IsNullOrWhiteSpace($env:NGROK_URL)) {
-              Write-Host "ERROR: NGROK_URL is empty." -ForegroundColor Red
-              exit 1
-          }
-
-          # Do NOT test the public ngrok endpoint from the same GitHub runner.
-          # A same-host/hairpin TCP test can fail even when the tunnel is valid
-          # and reachable from your own computer.
-          try {
-              $tunnels = Invoke-RestMethod `
-                  -Uri "http://127.0.0.1:4040/api/tunnels" `
-                  -TimeoutSec 5
-
-              $tcpTunnel = $tunnels.tunnels |
-                  Where-Object {
-                      $_.proto -eq "tcp" -and
-                      $_.public_url
-                  } |
-                  Select-Object -First 1
-
-              if (-not $tcpTunnel) {
-                  Write-Host "ERROR: ngrok API does not report an active TCP tunnel." -ForegroundColor Red
-                  exit 1
-              }
-
-              $reportedAddress = $tcpTunnel.public_url -replace "^tcp://", ""
-
-              Write-Host "ngrok API reports active TCP tunnel." -ForegroundColor Green
-              Write-Host "Public address: $reportedAddress" -ForegroundColor Cyan
-
-              if ($reportedAddress -ne $env:NGROK_URL) {
-                  Write-Host "Updating NGROK_URL to current tunnel address." -ForegroundColor Yellow
-                  "NGROK_URL=$reportedAddress" |
-                      Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-              }
-          }
-          catch {
-              Write-Host "ERROR: Could not query local ngrok API." -ForegroundColor Red
-              Write-Host $_.Exception.Message -ForegroundColor Red
-              exit 1
-          }
-
-          # Final local RDP check. This is the meaningful server-side test.
-          $localTest = Test-NetConnection `
-              -ComputerName 127.0.0.1 `
-              -Port 3389 `
-              -WarningAction SilentlyContinue
-
-          if (-not $localTest.TcpTestSucceeded) {
-              Write-Host "ERROR: RDP is no longer reachable locally on TCP 3389." -ForegroundColor Red
-              exit 1
-          }
-
-          Write-Host "RDP + ngrok tunnel are ready." -ForegroundColor Green
-
-      - name: Show RDP Login Details
-        shell: powershell
-        run: |
           Write-Host ""
           Write-Host "============================================================" -ForegroundColor Green
           Write-Host "                 RDP CONNECTION READY" -ForegroundColor Green
           Write-Host "============================================================" -ForegroundColor Green
-          Write-Host "PC / Host : $env:NGROK_URL" -ForegroundColor Cyan
+          Write-Host "PC / Host : $currentUrl" -ForegroundColor Cyan
           Write-Host "Username  : $env:RDP_USERNAME" -ForegroundColor Cyan
           Write-Host "Password  : $env:RDP_PASSWORD" -ForegroundColor Cyan
           Write-Host "============================================================" -ForegroundColor Green
           Write-Host ""
-          Write-Host "Open Windows App or mstsc and enter the values above." -ForegroundColor Yellow
-          Write-Host "If prompted about a certificate, accept it for this temporary runner." -ForegroundColor Yellow
+          Write-Host "Open Windows App or mstsc and use the values above." -ForegroundColor Yellow
+          Write-Host "The tunnel will remain alive while this step is running." -ForegroundColor Yellow
           Write-Host ""
 
-      - name: Keep RDP Session Alive
-        shell: powershell
-        run: |
+          # Keep everything alive in this same step.
           $endTime = (Get-Date).AddMinutes(345)
-          $ngrokExe = "C:\ngrok\ngrok.exe"
-          $currentUrl = $env:NGROK_URL
-
-          Write-Host "Keeping the runner alive..." -ForegroundColor Cyan
 
           while ((Get-Date) -lt $endTime) {
-              # Keep RDP service alive.
+              # RDP service health.
               $rdpService = Get-Service `
                   -Name TermService `
                   -ErrorAction SilentlyContinue
@@ -492,7 +480,7 @@ jobs:
                   Start-Sleep -Seconds 4
               }
 
-              # Ensure RDP is still listening.
+              # RDP listener health.
               $listener = Get-NetTCPConnection `
                   -State Listen `
                   -LocalPort 3389 `
@@ -504,36 +492,63 @@ jobs:
                   Start-Sleep -Seconds 5
               }
 
-              # Keep ngrok alive.
-              $ngrokProcess = Get-Process `
-                  -Name ngrok `
-                  -ErrorAction SilentlyContinue
+              # ngrok health.
+              $ngrokProcess.Refresh()
 
-              if (-not $ngrokProcess) {
-                  Write-Host "ngrok stopped. Restarting..." -ForegroundColor Yellow
+              if ($ngrokProcess.HasExited) {
+                  Write-Host "ngrok stopped. Restarting tunnel..." -ForegroundColor Yellow
 
-                  Start-Process `
+                  $ngrokProcess = Start-Process `
                       -FilePath $ngrokExe `
                       -ArgumentList "tcp","3389","--log=stdout","--log-format=json" `
                       -WindowStyle Hidden `
-                      -RedirectStandardOutput "C:\ngrok\ngrok.log" `
-                      -RedirectStandardError "C:\ngrok\ngrok-error.log"
+                      -RedirectStandardOutput $ngrokLog `
+                      -RedirectStandardError $ngrokErr `
+                      -PassThru
 
-                  Start-Sleep -Seconds 10
-              }
+                  Start-Sleep -Seconds 8
 
-              # Refresh tunnel address in case ngrok restarted.
-              try {
-                  $tunnels = Invoke-RestMethod `
-                      -Uri "http://127.0.0.1:4040/api/tunnels" `
-                      -TimeoutSec 4
+                  # Try to discover the new address.
+                  $newPublicUrl = $null
 
-                  $tcpTunnel = $tunnels.tunnels |
-                      Where-Object { $_.proto -eq "tcp" } |
-                      Select-Object -First 1
+                  for ($j = 1; $j -le 20; $j++) {
+                      try {
+                          $tunnels = Invoke-RestMethod `
+                              -Uri "http://127.0.0.1:4040/api/tunnels" `
+                              -TimeoutSec 2
 
-                  if ($tcpTunnel.public_url) {
-                      $newUrl = $tcpTunnel.public_url -replace "^tcp://", ""
+                          $tcpTunnel = $tunnels.tunnels |
+                              Where-Object {
+                                  $_.proto -eq "tcp" -and
+                                  $_.public_url
+                              } |
+                              Select-Object -First 1
+
+                          if ($tcpTunnel.public_url) {
+                              $newPublicUrl = $tcpTunnel.public_url
+                              break
+                          }
+                      }
+                      catch {}
+
+                      if (Test-Path $ngrokLog) {
+                          $logLines = Get-Content $ngrokLog -ErrorAction SilentlyContinue
+                          foreach ($line in $logLines) {
+                              if ($line -match 'tcp://[A-Za-z0-9\.\-]+:\d+') {
+                                  $newPublicUrl = $Matches[0]
+                              }
+                          }
+
+                          if ($newPublicUrl) {
+                              break
+                          }
+                      }
+
+                      Start-Sleep -Seconds 2
+                  }
+
+                  if ($newPublicUrl) {
+                      $newUrl = $newPublicUrl -replace "^tcp://", ""
 
                       if ($newUrl -ne $currentUrl) {
                           $currentUrl = $newUrl
@@ -549,9 +564,8 @@ jobs:
                       }
                   }
               }
-              catch {}
 
-              # Lightweight system health info.
+              # Lightweight health telemetry.
               try {
                   $cpu = (
                       Get-CimInstance Win32_Processor |
@@ -567,14 +581,16 @@ jobs:
                   )
 
                   Write-Host (
-                      "[{0}] CPU: {1}% | RAM: {2}% | RDP: OK | ngrok: OK" -f `
+                      "[{0}] CPU: {1}% | RAM: {2}% | RDP: OK | ngrok PID: {3} | Host: {4}" -f `
                       (Get-Date -Format "HH:mm:ss"),
                       [math]::Round($cpu, 1),
-                      $memoryPercent
+                      $memoryPercent,
+                      $ngrokProcess.Id,
+                      $currentUrl
                   ) -ForegroundColor Green
               }
               catch {
-                  Write-Host "Session alive." -ForegroundColor Green
+                  Write-Host "Session alive. Host: $currentUrl" -ForegroundColor Green
               }
 
               Start-Sleep -Seconds 120
