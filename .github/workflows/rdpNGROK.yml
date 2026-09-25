@@ -1,4 +1,4 @@
-name: RDP-Optimized-Stable
+name: RDP-Optimized-Working
 
 on:
   workflow_dispatch:
@@ -9,72 +9,72 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Validate Required Secrets
+      - name: Validate ngrok Secret
         shell: powershell
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:NGROK_AUTH_TOKEN)) {
-              Write-Host "Missing NGROK_AUTH_TOKEN secret." -ForegroundColor Red
+              Write-Host "ERROR: NGROK_AUTH_TOKEN secret is missing." -ForegroundColor Red
+              Write-Host "Add it in Repository Settings -> Secrets and variables -> Actions." -ForegroundColor Yellow
               exit 1
           }
 
-          if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
-              Write-Host "Missing RDP_PASSWORD secret." -ForegroundColor Red
-              exit 1
-          }
+          Write-Host "NGROK_AUTH_TOKEN is present." -ForegroundColor Green
 
-          Write-Host "Required secrets are present." -ForegroundColor Green
-
-      - name: Stable Performance Profile
+      - name: Enable Stable Performance Mode
         shell: powershell
         run: |
           Write-Host "Applying stable performance settings..." -ForegroundColor Cyan
 
-          # High/Ultimate performance if available. This changes scheduling/power policy,
-          # but does not pretend to add CPU cores or RAM to the hosted runner.
-          $ultimateGuid = "e9a42b02-d5df-448d-aa00-03f14749eb61"
-          powercfg -duplicatescheme $ultimateGuid 2>$null | Out-Null
+          # Try to enable Ultimate Performance.
+          powercfg -duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 2>$null | Out-Null
 
           $ultimate = powercfg /list | Select-String "Ultimate Performance" | Select-Object -First 1
+
           if ($ultimate) {
               $guid = [regex]::Match($ultimate.ToString(), '[0-9a-fA-F-]{36}').Value
+
               if ($guid) {
                   powercfg /setactive $guid
-                  Write-Host "Ultimate Performance power plan enabled." -ForegroundColor Green
+                  Write-Host "Ultimate Performance enabled." -ForegroundColor Green
               }
-          } else {
+          }
+          else {
               powercfg /setactive SCHEME_MIN
-              Write-Host "High Performance power plan enabled." -ForegroundColor Green
+              Write-Host "High Performance enabled." -ForegroundColor Green
           }
 
+          # Prevent sleep during the session.
           powercfg /change monitor-timeout-ac 0 2>$null
           powercfg /change standby-timeout-ac 0 2>$null
           powercfg /change disk-timeout-ac 0 2>$null
           powercfg /hibernate off 2>$null
 
-          # Reduce UI effects that consume CPU/GPU bandwidth in a remote session.
+          # Reduce unnecessary visual effects.
           New-Item -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" -Force | Out-Null
-          Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" `
-              -Name "VisualFXSetting" -Type DWord -Value 2 -Force
+          Set-ItemProperty `
+              -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" `
+              -Name "VisualFXSetting" `
+              -Type DWord `
+              -Value 2 `
+              -Force
 
-          Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" `
-              -Name "MenuShowDelay" -Value "0" -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty `
+              -Path "HKCU:\Control Panel\Desktop" `
+              -Name "MenuShowDelay" `
+              -Value "0" `
+              -Force `
+              -ErrorAction SilentlyContinue
 
-          # Do NOT disable the page file, SysMain, NIC offloads, DNS, ECN, RSS/RSC,
-          # or change congestion-control algorithms. On a virtual hosted runner those
-          # changes can make latency less predictable instead of improving it.
-          Write-Host "Stable performance profile applied." -ForegroundColor Green
+          Write-Host "Performance profile applied." -ForegroundColor Green
 
-      - name: Trim Nonessential Background Services
+      - name: Reduce Safe Background Activity
         shell: powershell
         run: |
-          Write-Host "Reducing safe nonessential background activity..." -ForegroundColor Cyan
+          Write-Host "Stopping a few nonessential services..." -ForegroundColor Cyan
 
-          # Keep networking, Windows Update infrastructure, SysMain, WMI, event log,
-          # Remote Desktop services, and core system services untouched.
-          $servicesToStop = @(
+          $services = @(
               "DiagTrack",
               "dmwappushservice",
               "WSearch",
@@ -82,71 +82,142 @@ jobs:
               "Fax"
           )
 
-          foreach ($serviceName in $servicesToStop) {
+          foreach ($serviceName in $services) {
               $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+
               if ($svc -and $svc.Status -eq "Running") {
                   Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
               }
           }
 
-          Write-Host "Background-service trim complete." -ForegroundColor Green
+          Write-Host "Background activity reduced." -ForegroundColor Green
 
-      - name: Create RDP User
+      - name: Create RDP User and Password
         shell: powershell
-        env:
-          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
-          $username = "rdpadmin"
-          $securePassword = ConvertTo-SecureString $env:RDP_PASSWORD -AsPlainText -Force
-          $existing = Get-LocalUser -Name $username -ErrorAction SilentlyContinue
+          Write-Host "Creating temporary RDP account..." -ForegroundColor Cyan
 
-          if ($existing) {
+          $username = "rdpadmin"
+
+          # Generate a strong random password automatically.
+          $chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%*_-"
+          $password = -join (1..20 | ForEach-Object {
+              $chars[(Get-Random -Minimum 0 -Maximum $chars.Length)]
+          })
+
+          # Ensure complexity.
+          $password = "Aa9!" + $password
+
+          $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+          $existingUser = Get-LocalUser -Name $username -ErrorAction SilentlyContinue
+
+          if ($existingUser) {
               Set-LocalUser -Name $username -Password $securePassword
-          } else {
+          }
+          else {
               New-LocalUser `
                   -Name $username `
                   -Password $securePassword `
                   -FullName "RDP Administrator" `
-                  -Description "Temporary RDP access account"
+                  -Description "Temporary GitHub Actions RDP User"
           }
 
           Enable-LocalUser -Name $username -ErrorAction SilentlyContinue
           Set-LocalUser -Name $username -PasswordNeverExpires $true -ErrorAction SilentlyContinue
 
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Administrators" -Member $username -ErrorAction SilentlyContinue
+          Add-LocalGroupMember `
+              -Group "Remote Desktop Users" `
+              -Member $username `
+              -ErrorAction SilentlyContinue
 
-          Write-Host "RDP account ready: .\rdpadmin" -ForegroundColor Green
+          Add-LocalGroupMember `
+              -Group "Administrators" `
+              -Member $username `
+              -ErrorAction SilentlyContinue
 
-      - name: Configure RDP for Stability
+          # Store password for later workflow steps.
+          "RDP_USERNAME=.\$username" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RDP_PASSWORD=$password" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          Write-Host "RDP user created successfully." -ForegroundColor Green
+
+      - name: Configure RDP
         shell: powershell
         run: |
-          Write-Host "Configuring RDP..." -ForegroundColor Cyan
+          Write-Host "Configuring Remote Desktop..." -ForegroundColor Cyan
 
-          $ts = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server"
-          $rdpTcp = "$ts\WinStations\RDP-Tcp"
+          $terminalServer = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server"
+          $rdpTcp = "$terminalServer\WinStations\RDP-Tcp"
 
-          Set-ItemProperty -Path $ts -Name "fDenyTSConnections" -Type DWord -Value 0 -Force
-          Set-ItemProperty -Path $rdpTcp -Name "PortNumber" -Type DWord -Value 3389 -Force
+          # Enable Remote Desktop.
+          Set-ItemProperty `
+              -Path $terminalServer `
+              -Name "fDenyTSConnections" `
+              -Type DWord `
+              -Value 0 `
+              -Force
 
-          # NLA + negotiated security improves compatibility with current RDP clients.
-          Set-ItemProperty -Path $rdpTcp -Name "UserAuthentication" -Type DWord -Value 1 -Force
-          Set-ItemProperty -Path $rdpTcp -Name "SecurityLayer" -Type DWord -Value 1 -Force -ErrorAction SilentlyContinue
+          # Use the standard RDP port.
+          Set-ItemProperty `
+              -Path $rdpTcp `
+              -Name "PortNumber" `
+              -Type DWord `
+              -Value 3389 `
+              -Force
 
-          # ngrok TCP forwards TCP only. Force RDP to use TCP so the client does not
-          # waste time attempting a UDP transport that cannot traverse this tunnel.
+          # Enable NLA for modern Windows App / mstsc compatibility.
+          Set-ItemProperty `
+              -Path $rdpTcp `
+              -Name "UserAuthentication" `
+              -Type DWord `
+              -Value 1 `
+              -Force
+
+          Set-ItemProperty `
+              -Path $rdpTcp `
+              -Name "SecurityLayer" `
+              -Type DWord `
+              -Value 1 `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+          # Force TCP transport because this ngrok tunnel is TCP.
           $policyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
           New-Item -Path $policyPath -Force | Out-Null
-          Set-ItemProperty -Path $policyPath -Name "SelectTransport" -Type DWord -Value 1 -Force
 
-          # Keep compression enabled; avoid exotic/unverified RDP registry tuning.
-          Set-ItemProperty -Path $rdpTcp -Name "fInheritCompressionType" -Type DWord -Value 0 -Force -ErrorAction SilentlyContinue
-          Set-ItemProperty -Path $rdpTcp -Name "CompressionType" -Type DWord -Value 1 -Force -ErrorAction SilentlyContinue
+          Set-ItemProperty `
+              -Path $policyPath `
+              -Name "SelectTransport" `
+              -Type DWord `
+              -Value 1 `
+              -Force
 
+          # Enable compression.
+          Set-ItemProperty `
+              -Path $rdpTcp `
+              -Name "fInheritCompressionType" `
+              -Type DWord `
+              -Value 0 `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+          Set-ItemProperty `
+              -Path $rdpTcp `
+              -Name "CompressionType" `
+              -Type DWord `
+              -Value 1 `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+          # Ensure RDP service is running.
           Set-Service -Name TermService -StartupType Automatic
           Start-Service -Name TermService -ErrorAction SilentlyContinue
 
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
+          # Enable firewall access for TCP 3389.
+          Enable-NetFirewallRule `
+              -DisplayGroup "Remote Desktop" `
+              -ErrorAction SilentlyContinue
+
           if (-not (Get-NetFirewallRule -DisplayName "RDP TCP 3389" -ErrorAction SilentlyContinue)) {
               New-NetFirewallRule `
                   -DisplayName "RDP TCP 3389" `
@@ -157,25 +228,34 @@ jobs:
           }
 
           Restart-Service -Name TermService -Force
-          Start-Sleep -Seconds 4
+          Start-Sleep -Seconds 5
 
-          $listener = Get-NetTCPConnection -State Listen -LocalPort 3389 -ErrorAction SilentlyContinue
+          # Verify local listener.
+          $listener = Get-NetTCPConnection `
+              -State Listen `
+              -LocalPort 3389 `
+              -ErrorAction SilentlyContinue
+
           if (-not $listener) {
-              Write-Host "RDP listener is not active on TCP 3389." -ForegroundColor Red
-              Get-Service TermService | Format-List *
+              Write-Host "ERROR: RDP is not listening on TCP 3389." -ForegroundColor Red
+              Get-Service TermService
               netstat -ano | Select-String ":3389"
               exit 1
           }
 
-          $test = Test-NetConnection 127.0.0.1 -Port 3389 -WarningAction SilentlyContinue
-          if (-not $test.TcpTestSucceeded) {
-              Write-Host "Local RDP connectivity test failed." -ForegroundColor Red
+          $localTest = Test-NetConnection `
+              -ComputerName 127.0.0.1 `
+              -Port 3389 `
+              -WarningAction SilentlyContinue
+
+          if (-not $localTest.TcpTestSucceeded) {
+              Write-Host "ERROR: Local TCP 3389 test failed." -ForegroundColor Red
               exit 1
           }
 
-          Write-Host "RDP is healthy on TCP 3389." -ForegroundColor Green
+          Write-Host "RDP is listening and reachable on TCP 3389." -ForegroundColor Green
 
-      - name: Install and Start ngrok
+      - name: Install ngrok
         shell: powershell
         env:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
@@ -187,7 +267,12 @@ jobs:
           $ngrokZip = "$env:TEMP\ngrok.zip"
 
           Remove-Item $ngrokDir -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Path $ngrokDir -Force | Out-Null
+          Remove-Item $ngrokZip -Force -ErrorAction SilentlyContinue
+
+          New-Item `
+              -ItemType Directory `
+              -Path $ngrokDir `
+              -Force | Out-Null
 
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
@@ -197,136 +282,207 @@ jobs:
           )
 
           $downloaded = $false
+
           foreach ($url in $urls) {
               try {
-                  Invoke-WebRequest -Uri $url -OutFile $ngrokZip -UseBasicParsing -TimeoutSec 90
-                  if ((Test-Path $ngrokZip) -and (Get-Item $ngrokZip).Length -gt 5000000) {
+                  Write-Host "Downloading from $url" -ForegroundColor Yellow
+
+                  Invoke-WebRequest `
+                      -Uri $url `
+                      -OutFile $ngrokZip `
+                      -UseBasicParsing `
+                      -TimeoutSec 90
+
+                  if (
+                      (Test-Path $ngrokZip) -and
+                      ((Get-Item $ngrokZip).Length -gt 5000000)
+                  ) {
                       $downloaded = $true
                       break
                   }
-              } catch {
-                  Write-Host "Download attempt failed: $($_.Exception.Message)" -ForegroundColor Yellow
+              }
+              catch {
+                  Write-Host "Download failed: $($_.Exception.Message)" -ForegroundColor Yellow
               }
           }
 
           if (-not $downloaded) {
-              Write-Host "Could not download ngrok." -ForegroundColor Red
+              Write-Host "ERROR: Could not download ngrok." -ForegroundColor Red
               exit 1
           }
 
-          Expand-Archive -Path $ngrokZip -DestinationPath $ngrokDir -Force
+          Expand-Archive `
+              -Path $ngrokZip `
+              -DestinationPath $ngrokDir `
+              -Force
+
           Remove-Item $ngrokZip -Force -ErrorAction SilentlyContinue
 
           if (-not (Test-Path $ngrokExe)) {
-              Write-Host "ngrok.exe was not found after extraction." -ForegroundColor Red
+              Write-Host "ERROR: ngrok.exe was not found." -ForegroundColor Red
               exit 1
           }
 
+          Write-Host "ngrok version:" -ForegroundColor Cyan
+          & $ngrokExe version
+
           & $ngrokExe config add-authtoken $env:NGROK_AUTH_TOKEN
+
           if ($LASTEXITCODE -ne 0) {
-              Write-Host "ngrok authentication failed." -ForegroundColor Red
+              Write-Host "ERROR: ngrok authentication failed." -ForegroundColor Red
               exit 1
           }
+
+          Write-Host "ngrok installed and authenticated." -ForegroundColor Green
+
+      - name: Start ngrok TCP Tunnel
+        shell: powershell
+        run: |
+          Write-Host "Starting ngrok TCP tunnel..." -ForegroundColor Cyan
+
+          $ngrokExe = "C:\ngrok\ngrok.exe"
+
+          Get-Process ngrok -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
 
           Start-Process `
               -FilePath $ngrokExe `
               -ArgumentList "tcp","3389","--log=stdout","--log-format=json" `
               -WindowStyle Hidden `
-              -RedirectStandardOutput "$ngrokDir\ngrok.log" `
-              -RedirectStandardError "$ngrokDir\ngrok-error.log"
+              -RedirectStandardOutput "C:\ngrok\ngrok.log" `
+              -RedirectStandardError "C:\ngrok\ngrok-error.log"
 
           $publicUrl = $null
-          for ($i = 1; $i -le 40; $i++) {
+
+          for ($i = 1; $i -le 45; $i++) {
               Start-Sleep -Seconds 2
 
               try {
-                  $tunnels = Invoke-RestMethod "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 4
-                  $tcp = $tunnels.tunnels |
+                  $tunnels = Invoke-RestMethod `
+                      -Uri "http://127.0.0.1:4040/api/tunnels" `
+                      -TimeoutSec 4
+
+                  $tcpTunnel = $tunnels.tunnels |
                       Where-Object { $_.proto -eq "tcp" } |
                       Select-Object -First 1
 
-                  if ($tcp.public_url) {
-                      $publicUrl = $tcp.public_url
+                  if ($tcpTunnel.public_url) {
+                      $publicUrl = $tcpTunnel.public_url
                       break
                   }
-              } catch {}
+              }
+              catch {
+                  Write-Host "Waiting for ngrok... $i/45" -ForegroundColor DarkGray
+              }
           }
 
           if (-not $publicUrl) {
-              Write-Host "ngrok tunnel did not become ready." -ForegroundColor Red
-              Get-Content "$ngrokDir\ngrok-error.log" -ErrorAction SilentlyContinue
+              Write-Host "ERROR: ngrok tunnel did not become ready." -ForegroundColor Red
+
+              Write-Host "--- ngrok stdout ---" -ForegroundColor Yellow
+              Get-Content "C:\ngrok\ngrok.log" -ErrorAction SilentlyContinue
+
+              Write-Host "--- ngrok stderr ---" -ForegroundColor Yellow
+              Get-Content "C:\ngrok\ngrok-error.log" -ErrorAction SilentlyContinue
+
               exit 1
           }
 
           $clean = $publicUrl -replace "^tcp://", ""
-          "NGROK_URL=$clean" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+          "NGROK_URL=$clean" |
+              Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
           Write-Host "ngrok tunnel ready: $clean" -ForegroundColor Green
 
-      - name: Verify End-to-End Tunnel
+      - name: Verify Public Tunnel
         shell: powershell
         run: |
-          $parts = $env:NGROK_URL -split ":"
-          if ($parts.Count -lt 2) {
-              Write-Host "Invalid NGROK_URL: $env:NGROK_URL" -ForegroundColor Red
+          Write-Host "Testing public tunnel..." -ForegroundColor Cyan
+
+          if ([string]::IsNullOrWhiteSpace($env:NGROK_URL)) {
+              Write-Host "ERROR: NGROK_URL is empty." -ForegroundColor Red
               exit 1
           }
 
-          $hostName = ($parts[0..($parts.Count - 2)] -join ":")
-          $port = [int]$parts[-1]
+          $lastColon = $env:NGROK_URL.LastIndexOf(":")
 
-          Write-Host "Testing public tunnel endpoint..." -ForegroundColor Cyan
-          $publicTest = Test-NetConnection -ComputerName $hostName -Port $port -WarningAction SilentlyContinue
-
-          if (-not $publicTest.TcpTestSucceeded) {
-              Write-Host "Public ngrok TCP endpoint is not reachable yet." -ForegroundColor Red
+          if ($lastColon -lt 1) {
+              Write-Host "ERROR: Invalid ngrok address: $env:NGROK_URL" -ForegroundColor Red
               exit 1
           }
 
-          Write-Host "Public tunnel endpoint is reachable." -ForegroundColor Green
+          $hostName = $env:NGROK_URL.Substring(0, $lastColon)
+          $port = [int]$env:NGROK_URL.Substring($lastColon + 1)
 
-      - name: Show Connection Info
+          $test = Test-NetConnection `
+              -ComputerName $hostName `
+              -Port $port `
+              -WarningAction SilentlyContinue
+
+          if (-not $test.TcpTestSucceeded) {
+              Write-Host "ERROR: Public ngrok endpoint is not reachable." -ForegroundColor Red
+              exit 1
+          }
+
+          Write-Host "Public ngrok endpoint is reachable." -ForegroundColor Green
+
+      - name: Show RDP Login Details
         shell: powershell
         run: |
           Write-Host ""
-          Write-Host "==========================================" -ForegroundColor Green
-          Write-Host "RDP CONNECTION READY" -ForegroundColor Green
-          Write-Host "==========================================" -ForegroundColor Green
-          Write-Host "PC address : $env:NGROK_URL" -ForegroundColor Cyan
-          Write-Host "Username   : .\rdpadmin" -ForegroundColor Cyan
-          Write-Host "Password   : value of your RDP_PASSWORD secret" -ForegroundColor Cyan
-          Write-Host "==========================================" -ForegroundColor Green
+          Write-Host "============================================================" -ForegroundColor Green
+          Write-Host "                 RDP CONNECTION READY" -ForegroundColor Green
+          Write-Host "============================================================" -ForegroundColor Green
+          Write-Host "PC / Host : $env:NGROK_URL" -ForegroundColor Cyan
+          Write-Host "Username  : $env:RDP_USERNAME" -ForegroundColor Cyan
+          Write-Host "Password  : $env:RDP_PASSWORD" -ForegroundColor Cyan
+          Write-Host "============================================================" -ForegroundColor Green
+          Write-Host ""
+          Write-Host "Open Windows App or mstsc and enter the values above." -ForegroundColor Yellow
+          Write-Host "If prompted about a certificate, accept it for this temporary runner." -ForegroundColor Yellow
+          Write-Host ""
 
-      - name: Keep Session Healthy
+      - name: Keep RDP Session Alive
         shell: powershell
-        env:
-          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          $endTime = (Get-Date).AddMinutes(350)
+          $endTime = (Get-Date).AddMinutes(345)
           $ngrokExe = "C:\ngrok\ngrok.exe"
-          $lastPublicUrl = $env:NGROK_URL
+          $currentUrl = $env:NGROK_URL
+
+          Write-Host "Keeping the runner alive..." -ForegroundColor Cyan
 
           while ((Get-Date) -lt $endTime) {
-              # RDP service health
-              $rdp = Get-Service TermService -ErrorAction SilentlyContinue
-              if (-not $rdp -or $rdp.Status -ne "Running") {
-                  Write-Host "RDP service stopped; restarting..." -ForegroundColor Yellow
-                  Start-Service TermService -ErrorAction SilentlyContinue
-                  Start-Sleep -Seconds 3
-              }
+              # Keep RDP service alive.
+              $rdpService = Get-Service `
+                  -Name TermService `
+                  -ErrorAction SilentlyContinue
 
-              # Local listener health
-              $listener = Get-NetTCPConnection -State Listen -LocalPort 3389 -ErrorAction SilentlyContinue
-              if (-not $listener) {
-                  Write-Host "RDP listener missing; restarting TermService..." -ForegroundColor Yellow
-                  Restart-Service TermService -Force -ErrorAction SilentlyContinue
+              if (-not $rdpService -or $rdpService.Status -ne "Running") {
+                  Write-Host "TermService stopped. Restarting..." -ForegroundColor Yellow
+                  Start-Service -Name TermService -ErrorAction SilentlyContinue
                   Start-Sleep -Seconds 4
               }
 
-              # ngrok process health
-              $ngrok = Get-Process ngrok -ErrorAction SilentlyContinue
-              if (-not $ngrok) {
-                  Write-Host "ngrok stopped; restarting tunnel..." -ForegroundColor Yellow
+              # Ensure RDP is still listening.
+              $listener = Get-NetTCPConnection `
+                  -State Listen `
+                  -LocalPort 3389 `
+                  -ErrorAction SilentlyContinue
+
+              if (-not $listener) {
+                  Write-Host "RDP listener disappeared. Restarting TermService..." -ForegroundColor Yellow
+                  Restart-Service -Name TermService -Force -ErrorAction SilentlyContinue
+                  Start-Sleep -Seconds 5
+              }
+
+              # Keep ngrok alive.
+              $ngrokProcess = Get-Process `
+                  -Name ngrok `
+                  -ErrorAction SilentlyContinue
+
+              if (-not $ngrokProcess) {
+                  Write-Host "ngrok stopped. Restarting..." -ForegroundColor Yellow
 
                   Start-Process `
                       -FilePath $ngrokExe `
@@ -335,40 +491,65 @@ jobs:
                       -RedirectStandardOutput "C:\ngrok\ngrok.log" `
                       -RedirectStandardError "C:\ngrok\ngrok-error.log"
 
-                  Start-Sleep -Seconds 8
+                  Start-Sleep -Seconds 10
               }
 
-              # Refresh public address after a tunnel restart.
+              # Refresh tunnel address in case ngrok restarted.
               try {
-                  $tunnels = Invoke-RestMethod "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 4
-                  $tcp = $tunnels.tunnels |
+                  $tunnels = Invoke-RestMethod `
+                      -Uri "http://127.0.0.1:4040/api/tunnels" `
+                      -TimeoutSec 4
+
+                  $tcpTunnel = $tunnels.tunnels |
                       Where-Object { $_.proto -eq "tcp" } |
                       Select-Object -First 1
 
-                  if ($tcp.public_url) {
-                      $currentUrl = $tcp.public_url -replace "^tcp://", ""
-                      if ($currentUrl -ne $lastPublicUrl) {
-                          $lastPublicUrl = $currentUrl
-                          Write-Host "IMPORTANT: ngrok address changed to: $currentUrl" -ForegroundColor Yellow
+                  if ($tcpTunnel.public_url) {
+                      $newUrl = $tcpTunnel.public_url -replace "^tcp://", ""
+
+                      if ($newUrl -ne $currentUrl) {
+                          $currentUrl = $newUrl
+
+                          Write-Host ""
+                          Write-Host "=============================================" -ForegroundColor Yellow
+                          Write-Host "NGROK ADDRESS CHANGED" -ForegroundColor Yellow
+                          Write-Host "New PC / Host: $currentUrl" -ForegroundColor Cyan
+                          Write-Host "Username     : $env:RDP_USERNAME" -ForegroundColor Cyan
+                          Write-Host "Password     : $env:RDP_PASSWORD" -ForegroundColor Cyan
+                          Write-Host "=============================================" -ForegroundColor Yellow
+                          Write-Host ""
                       }
                   }
-              } catch {}
+              }
+              catch {}
 
-              # Lightweight telemetry only; no aggressive auto-tuning.
-              $cpu = (Get-CimInstance Win32_Processor |
-                  Measure-Object -Property LoadPercentage -Average).Average
+              # Lightweight system health info.
+              try {
+                  $cpu = (
+                      Get-CimInstance Win32_Processor |
+                      Measure-Object -Property LoadPercentage -Average
+                  ).Average
 
-              $os = Get-CimInstance Win32_OperatingSystem
-              $memoryPct = [math]::Round(
-                  (($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) /
-                  $os.TotalVisibleMemorySize) * 100, 1
-              )
+                  $os = Get-CimInstance Win32_OperatingSystem
 
-              Write-Host ("[{0}] CPU {1}% | Memory {2}% | RDP OK | ngrok OK" -f `
-                  (Get-Date -Format "HH:mm:ss"),
-                  [math]::Round($cpu, 1),
-                  $memoryPct
-              ) -ForegroundColor Green
+                  $memoryPercent = [math]::Round(
+                      (($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) /
+                      $os.TotalVisibleMemorySize) * 100,
+                      1
+                  )
+
+                  Write-Host (
+                      "[{0}] CPU: {1}% | RAM: {2}% | RDP: OK | ngrok: OK" -f `
+                      (Get-Date -Format "HH:mm:ss"),
+                      [math]::Round($cpu, 1),
+                      $memoryPercent
+                  ) -ForegroundColor Green
+              }
+              catch {
+                  Write-Host "Session alive." -ForegroundColor Green
+              }
 
               Start-Sleep -Seconds 120
           }
+
+          Write-Host "Maximum session duration reached." -ForegroundColor Yellow
