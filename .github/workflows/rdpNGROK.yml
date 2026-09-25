@@ -395,37 +395,65 @@ jobs:
 
           Write-Host "ngrok tunnel ready: $clean" -ForegroundColor Green
 
-      - name: Verify Public Tunnel
+      - name: Verify ngrok Tunnel Registration
         shell: powershell
         run: |
-          Write-Host "Testing public tunnel..." -ForegroundColor Cyan
+          Write-Host "Verifying ngrok tunnel registration..." -ForegroundColor Cyan
 
           if ([string]::IsNullOrWhiteSpace($env:NGROK_URL)) {
               Write-Host "ERROR: NGROK_URL is empty." -ForegroundColor Red
               exit 1
           }
 
-          $lastColon = $env:NGROK_URL.LastIndexOf(":")
+          # Do NOT test the public ngrok endpoint from the same GitHub runner.
+          # A same-host/hairpin TCP test can fail even when the tunnel is valid
+          # and reachable from your own computer.
+          try {
+              $tunnels = Invoke-RestMethod `
+                  -Uri "http://127.0.0.1:4040/api/tunnels" `
+                  -TimeoutSec 5
 
-          if ($lastColon -lt 1) {
-              Write-Host "ERROR: Invalid ngrok address: $env:NGROK_URL" -ForegroundColor Red
+              $tcpTunnel = $tunnels.tunnels |
+                  Where-Object {
+                      $_.proto -eq "tcp" -and
+                      $_.public_url
+                  } |
+                  Select-Object -First 1
+
+              if (-not $tcpTunnel) {
+                  Write-Host "ERROR: ngrok API does not report an active TCP tunnel." -ForegroundColor Red
+                  exit 1
+              }
+
+              $reportedAddress = $tcpTunnel.public_url -replace "^tcp://", ""
+
+              Write-Host "ngrok API reports active TCP tunnel." -ForegroundColor Green
+              Write-Host "Public address: $reportedAddress" -ForegroundColor Cyan
+
+              if ($reportedAddress -ne $env:NGROK_URL) {
+                  Write-Host "Updating NGROK_URL to current tunnel address." -ForegroundColor Yellow
+                  "NGROK_URL=$reportedAddress" |
+                      Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+              }
+          }
+          catch {
+              Write-Host "ERROR: Could not query local ngrok API." -ForegroundColor Red
+              Write-Host $_.Exception.Message -ForegroundColor Red
               exit 1
           }
 
-          $hostName = $env:NGROK_URL.Substring(0, $lastColon)
-          $port = [int]$env:NGROK_URL.Substring($lastColon + 1)
-
-          $test = Test-NetConnection `
-              -ComputerName $hostName `
-              -Port $port `
+          # Final local RDP check. This is the meaningful server-side test.
+          $localTest = Test-NetConnection `
+              -ComputerName 127.0.0.1 `
+              -Port 3389 `
               -WarningAction SilentlyContinue
 
-          if (-not $test.TcpTestSucceeded) {
-              Write-Host "ERROR: Public ngrok endpoint is not reachable." -ForegroundColor Red
+          if (-not $localTest.TcpTestSucceeded) {
+              Write-Host "ERROR: RDP is no longer reachable locally on TCP 3389." -ForegroundColor Red
               exit 1
           }
 
-          Write-Host "Public ngrok endpoint is reachable." -ForegroundColor Green
+          Write-Host "RDP + ngrok tunnel are ready." -ForegroundColor Green
 
       - name: Show RDP Login Details
         shell: powershell
